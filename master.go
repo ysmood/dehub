@@ -3,6 +3,7 @@ package dehub
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -162,6 +163,10 @@ func (m *Master) ForwardDir(conn net.Conn, localDir, remoteDir string, cacheLimi
 	nfs.Log.SetLevel(-1) // disable log
 	err = nfs.Serve(tunnel, cacheHelper)
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+
 		return fmt.Errorf("failed to serve nfs: %w", err)
 	}
 

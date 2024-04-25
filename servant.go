@@ -204,14 +204,14 @@ func (s *Servant) forwardDir(conn net.Conn, path string) error {
 
 	_ = exec.Command("umount", "-f", path).Run()
 
-	err = exec.Command("mount",
+	out, err := exec.Command("mount",
 		"-o", fmt.Sprintf("port=%s,mountport=%s", port, port),
 		"-t", "nfs",
 		"127.0.0.1:",
 		path,
-	).Run()
+	).CombinedOutput()
 	if err != nil {
-		s.l.Error("Failed to mount nfs", slog.Any("err", err))
+		s.l.Error("Failed to mount nfs", slog.Any("err", err), slog.String("out", string(out)))
 		return nil
 	}
 
@@ -221,7 +221,7 @@ func (s *Servant) forwardDir(conn net.Conn, path string) error {
 
 	s.l.Info("nfs tunnel closed", slog.String("path", path))
 
-	out, _ := exec.Command("umount", "-f", path).CombinedOutput()
+	out, _ = exec.Command("umount", "-f", path).CombinedOutput()
 
 	s.l.Info("nfs unmounted", slog.String("path", path), slog.String("out", string(out)))
 

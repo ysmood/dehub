@@ -92,7 +92,9 @@ func getWithProxy(g got.G, proxyHost string, u string) string {
 func TestForwardDir(t *testing.T) {
 	g := got.T(t)
 
-	log := slog.NewJSONHandler(io.Discard, nil)
+	logBuf := bytes.NewBuffer(nil)
+
+	log := slog.NewJSONHandler(logBuf, nil)
 
 	hub := dehub.NewHub(log)
 	hub.GetIP = func() (string, error) {
@@ -132,5 +134,5 @@ func TestForwardDir(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	g.True(g.PathExists(dir + "/id_ed25519.pub"))
+	g.Desc(logBuf.String()).True(g.PathExists(dir + "/id_ed25519.pub"))
 }
