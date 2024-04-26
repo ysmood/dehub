@@ -89,7 +89,7 @@ func getWithProxy(g got.G, proxyHost string, u string) string {
 	return g.Read(res.Body).String()
 }
 
-func TestForwardDir(t *testing.T) {
+func TestMountDir(t *testing.T) {
 	g := got.T(t)
 
 	logBuf := bytes.NewBuffer(nil)
@@ -130,7 +130,7 @@ func TestForwardDir(t *testing.T) {
 	dir, err := os.MkdirTemp("", "dehub-nfs")
 	g.E(err)
 
-	go func() { g.E(master.ForwardDir(masterConn, "lib/fixtures", dir, 0)) }()
+	go func() { g.E(master.MountDir(masterConn, "lib/fixtures", dir, 0)) }()
 
 	time.Sleep(time.Second)
 

@@ -9,12 +9,15 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/hashicorp/yamux"
 	"github.com/things-go/go-socks5"
+	"github.com/willscott/go-nfs"
+	nfshelper "github.com/willscott/go-nfs/helpers"
+	osfsx "github.com/ysmood/dehub/lib/osfs"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -117,8 +120,8 @@ func (s *Servant) serve(h *TunnelHeader, conn net.Conn) error {
 		return s.exec(conn, h.ExecMeta)
 	case CommandForwardSocks5:
 		return s.forwardSocks5(conn)
-	case CommandForwardDir:
-		return s.forwardDir(conn, h.ForwardDirMeta.Path)
+	case CommandShareDir:
+		return s.shareDir(conn, h.ShareDirMeta)
 	}
 
 	return fmt.Errorf("unknown command: %d", h.Command)
@@ -168,90 +171,33 @@ func (s *Servant) forwardSocks5(conn net.Conn) error {
 	}
 }
 
-func (s *Servant) forwardDir(conn net.Conn, path string) error {
-	err := os.MkdirAll(path, 0o755) //nolint: gomnd
+func (s *Servant) shareDir(conn net.Conn, meta *MountDirMeta) error {
+	tunnel, err := yamux.Server(conn, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create mount directory: %w", err)
+		return fmt.Errorf("failed to create yamux tunnel: %w", err)
 	}
 
-	list, err := os.ReadDir(path)
-	if err != nil {
-		return fmt.Errorf("failed to read directory: %w", err)
+	if _, err := os.Stat(meta.Path); os.IsNotExist(err) {
+		return fmt.Errorf("remote directory does not exist: %w", err)
 	}
-
-	if len(list) > 0 {
-		return fmt.Errorf("mount to non-empty dir is not allowed: %s", path)
-	}
-
-	fServer, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("failed to create file server: %w", err)
-	}
-
-	defer func() { _ = fServer.Close() }()
 
 	startTunnel(conn)
 
-	tunnel, err := yamux.Client(conn, nil)
+	bfs := osfs.New(meta.Path)
+	bfsPlusChange := osfsx.New(bfs)
+
+	handler := nfshelper.NewNullAuthHandler(bfsPlusChange)
+	cacheHelper := nfshelper.NewCachingHandler(handler, meta.CacheLimit)
+
+	nfs.Log.SetLevel(-1) // disable log
+	err = nfs.Serve(tunnel, cacheHelper)
 	if err != nil {
-		s.l.Error("Failed to create yamux session", slog.Any("err", err))
-		return nil
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+
+		s.l.Error("failed to serve nfs", "err", err)
 	}
-
-	s.serveNFS(tunnel, fServer)
-
-	port := strconv.Itoa(fServer.Addr().(*net.TCPAddr).Port)
-
-	_ = exec.Command("umount", "-f", path).Run()
-
-	out, err := exec.Command("mount",
-		"-o", fmt.Sprintf("port=%s,mountport=%s", port, port),
-		"-t", "nfs",
-		"127.0.0.1:",
-		path,
-	).CombinedOutput()
-	if err != nil {
-		s.l.Error("Failed to mount nfs", slog.Any("err", err), slog.String("out", string(out)))
-		return nil
-	}
-
-	s.l.Info("nfs mounted", slog.String("path", path))
-
-	<-tunnel.CloseChan()
-
-	s.l.Info("nfs tunnel closed", slog.String("path", path))
-
-	out, _ = exec.Command("umount", "-f", path).CombinedOutput()
-
-	s.l.Info("nfs unmounted", slog.String("path", path), slog.String("out", string(out)))
 
 	return nil
-}
-
-func (s *Servant) serveNFS(tunnel *yamux.Session, fServer net.Listener) {
-	go func() {
-		for {
-			fConn, err := fServer.Accept()
-			if err != nil {
-				s.l.Error("Failed to accept connection", slog.Any("err", err))
-				return
-			}
-
-			nfs, err := tunnel.Open()
-			if err != nil {
-				s.l.Error("Failed to open yamux stream", slog.Any("err", err))
-				return
-			}
-
-			go func() {
-				go func() {
-					_, _ = io.Copy(nfs, fConn)
-					_ = nfs.Close()
-				}()
-
-				_, _ = io.Copy(fConn, nfs)
-				_ = fConn.Close()
-			}()
-		}
-	}()
 }

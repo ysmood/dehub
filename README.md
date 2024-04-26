@@ -6,4 +6,4 @@ It supports the following features:
 
 - Execute and attach to random cli command on remote machine.
 - Forward socks5 proxy on remote.
-- Mount a local directory to remote.
+- Mount a remote directory to local.

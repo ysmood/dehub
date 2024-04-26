@@ -51,11 +51,11 @@ type Servant struct {
 }
 
 type TunnelHeader struct {
-	Timestamp      []byte
-	Sign           *ssh.Signature
-	Command        Command
-	ExecMeta       *ExecMeta
-	ForwardDirMeta *ForwardDirMeta
+	Timestamp    []byte
+	Sign         *ssh.Signature
+	Command      Command
+	ExecMeta     *ExecMeta
+	ShareDirMeta *MountDirMeta
 }
 
 type ExecMeta struct {
@@ -64,8 +64,9 @@ type ExecMeta struct {
 	Args []string
 }
 
-type ForwardDirMeta struct {
-	Path string
+type MountDirMeta struct {
+	Path       string
+	CacheLimit int
 }
 
 type Command int
@@ -73,7 +74,7 @@ type Command int
 const (
 	CommandExec Command = iota
 	CommandForwardSocks5
-	CommandForwardDir
+	CommandShareDir
 )
 
 type Logger interface {

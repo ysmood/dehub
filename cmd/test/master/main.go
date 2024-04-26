@@ -24,12 +24,14 @@ func main() {
 		E(master.ForwardSocks5(dial(hubAddr), l))
 	}()
 
+	dir, err := os.MkdirTemp("", "dehub-nfs")
+	E(err)
+
+	slog.Info("mount dir", "dir", dir)
+
 	// Forward dir
 	go func() {
-		dir, err := os.MkdirTemp("", "dehub-nfs")
-		E(err)
-
-		E(master.ForwardDir(dial(hubAddr), "lib/fixtures", dir, 0))
+		E(master.MountDir(dial(hubAddr), "lib/fixtures", dir, 0))
 	}()
 
 	// Forward shell

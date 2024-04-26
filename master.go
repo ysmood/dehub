@@ -3,20 +3,17 @@ package dehub
 import (
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/hashicorp/yamux"
-	"github.com/willscott/go-nfs"
-	nfshelper "github.com/willscott/go-nfs/helpers"
-	osfsx "github.com/ysmood/dehub/lib/osfs"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
@@ -125,7 +122,7 @@ func (m *Master) ForwardSocks5(conn net.Conn, listenTo net.Listener) error {
 	}
 }
 
-func (m *Master) ForwardDir(conn net.Conn, localDir, remoteDir string, cacheLimit int) error {
+func (m *Master) MountDir(conn net.Conn, remoteDir, localDir string, cacheLimit int) error {
 	if cacheLimit <= 0 {
 		cacheLimit = 2048
 	}
@@ -136,8 +133,11 @@ func (m *Master) ForwardDir(conn net.Conn, localDir, remoteDir string, cacheLimi
 	}
 
 	header := &TunnelHeader{
-		Command:        CommandForwardDir,
-		ForwardDirMeta: &ForwardDirMeta{Path: remoteDir},
+		Command: CommandShareDir,
+		ShareDirMeta: &MountDirMeta{
+			Path:       remoteDir,
+			CacheLimit: cacheLimit,
+		},
 	}
 
 	err = m.handshake(conn, header)
@@ -145,32 +145,28 @@ func (m *Master) ForwardDir(conn net.Conn, localDir, remoteDir string, cacheLimi
 		return fmt.Errorf("failed to handshake: %w", err)
 	}
 
-	tunnel, err := yamux.Server(conn, nil)
+	err = os.MkdirAll(localDir, 0o755) //nolint: gomnd
 	if err != nil {
-		return fmt.Errorf("failed to create yamux tunnel: %w", err)
+		return fmt.Errorf("failed to create mount directory: %w", err)
 	}
 
-	if _, err := os.Stat(localDir); os.IsNotExist(err) {
-		return fmt.Errorf("local directory does not exist: %w", err)
-	}
-
-	bfs := osfs.New(localDir)
-	bfsPlusChange := osfsx.New(bfs)
-
-	handler := nfshelper.NewNullAuthHandler(bfsPlusChange)
-	cacheHelper := nfshelper.NewCachingHandler(handler, cacheLimit)
-
-	nfs.Log.SetLevel(-1) // disable log
-	err = nfs.Serve(tunnel, cacheHelper)
+	list, err := os.ReadDir(localDir)
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-
-		return fmt.Errorf("failed to serve nfs: %w", err)
+		return fmt.Errorf("failed to read directory: %w", err)
 	}
 
-	return nil
+	if len(list) > 0 {
+		return fmt.Errorf("mount to non-empty dir is not allowed: %s", localDir)
+	}
+
+	fServer, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("failed to create file server: %w", err)
+	}
+
+	defer func() { _ = fServer.Close() }()
+
+	return m.mountNFS(conn, localDir, fServer)
 }
 
 func (m *Master) handshake(conn net.Conn, header *TunnelHeader) error {
@@ -214,4 +210,67 @@ func (h *TunnelHeader) sign(keyData []byte) error {
 	h.Sign = sig
 
 	return nil
+}
+
+func (m *Master) mountNFS(conn net.Conn, localDir string, fServer net.Listener) error {
+	tunnel, err := yamux.Client(conn, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create yamux session: %w", err)
+	}
+
+	m.serveNFS(tunnel, fServer)
+
+	port := strconv.Itoa(fServer.Addr().(*net.TCPAddr).Port)
+
+	_ = exec.Command("umount", "-f", localDir).Run()
+
+	out, err := exec.Command("mount",
+		"-o", fmt.Sprintf("port=%s,mountport=%s", port, port),
+		"-t", "nfs",
+		"127.0.0.1:",
+		localDir,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to mount nfs: %w: %s", err, out)
+	}
+
+	m.l.Info("nfs mounted", slog.String("path", localDir))
+
+	<-tunnel.CloseChan()
+
+	m.l.Info("nfs tunnel closed", slog.String("path", localDir))
+
+	out, _ = exec.Command("umount", "-f", localDir).CombinedOutput()
+
+	m.l.Info("nfs unmounted", slog.String("path", localDir), slog.String("out", string(out)))
+
+	return nil
+}
+
+func (m *Master) serveNFS(tunnel *yamux.Session, fServer net.Listener) {
+	go func() {
+		for {
+			fConn, err := fServer.Accept()
+			if err != nil {
+				m.l.Error("Failed to accept connection", slog.Any("err", err))
+				return
+			}
+
+			nfs, err := tunnel.Open()
+			if err != nil {
+				m.l.Error("Failed to open yamux stream", slog.Any("err", err))
+				return
+			}
+
+			go func() {
+				go func() {
+					_, _ = io.Copy(nfs, fConn)
+					_ = nfs.Close()
+				}()
+
+				_, _ = io.Copy(fConn, nfs)
+				_ = fConn.Close()
+			}()
+		}
+	}()
 }
