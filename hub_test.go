@@ -2,8 +2,6 @@ package dehub_test
 
 import (
 	"bytes"
-	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"testing"
@@ -18,16 +16,14 @@ import (
 func TestBasic(t *testing.T) {
 	g := got.T(t)
 
-	log := slog.NewJSONHandler(io.Discard, nil)
-
-	hub := dehub.NewHub(log)
+	hub := dehub.NewHub()
 	hub.GetIP = func() (string, error) {
 		return "127.0.0.1", nil
 	}
 
-	servant := dehub.NewServant(log, "test", []string{g.Read("lib/fixtures/id_ed25519.pub").String()})
+	servant := dehub.NewServant("test", []string{g.Read("lib/fixtures/id_ed25519.pub").String()})
 
-	master := dehub.NewMaster(log, "test", g.Read("lib/fixtures/id_ed25519").Bytes())
+	master := dehub.NewMaster("test", g.Read("lib/fixtures/id_ed25519").Bytes())
 
 	hubSrv, err := net.Listen("tcp", ":0")
 	g.E(err)
@@ -92,18 +88,14 @@ func getWithProxy(g got.G, proxyHost string, u string) string {
 func TestMountDir(t *testing.T) {
 	g := got.T(t)
 
-	logBuf := bytes.NewBuffer(nil)
-
-	log := slog.NewJSONHandler(logBuf, nil)
-
-	hub := dehub.NewHub(log)
+	hub := dehub.NewHub()
 	hub.GetIP = func() (string, error) {
 		return "127.0.0.1", nil
 	}
 
-	servant := dehub.NewServant(log, "test", []string{g.Read("lib/fixtures/id_ed25519.pub").String()})
+	servant := dehub.NewServant("test", []string{g.Read("lib/fixtures/id_ed25519.pub").String()})
 
-	master := dehub.NewMaster(log, "test", g.Read("lib/fixtures/id_ed25519").Bytes())
+	master := dehub.NewMaster("test", g.Read("lib/fixtures/id_ed25519").Bytes())
 
 	hubSrv, err := net.Listen("tcp", ":0")
 	g.E(err)

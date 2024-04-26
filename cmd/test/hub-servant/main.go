@@ -5,18 +5,19 @@ import (
 	"net"
 	"os"
 
+	"github.com/lmittmann/tint"
 	"github.com/ysmood/dehub"
 )
 
 func main() {
-	log := slog.NewJSONHandler(os.Stdout, nil)
-
-	hub := dehub.NewHub(log)
+	hub := dehub.NewHub()
+	hub.Logger = slog.New(tint.NewHandler(os.Stdout, nil))
 	hub.GetIP = func() (string, error) {
 		return "127.0.0.1", nil
 	}
 
-	servant := dehub.NewServant(log, "test", []string{string(readFile("lib/fixtures/id_ed25519.pub"))})
+	servant := dehub.NewServant("test", []string{string(readFile("lib/fixtures/id_ed25519.pub"))})
+	servant.Logger = slog.New(tint.NewHandler(os.Stdout, nil))
 
 	hubSrv, err := net.Listen("tcp", ":8813")
 	E(err)

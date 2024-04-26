@@ -21,6 +21,7 @@ require (
 
 require (
 	github.com/go-git/go-billy/v5 v5.5.0
+	github.com/lmittmann/tint v1.0.4
 	github.com/things-go/go-socks5 v0.0.5
 	github.com/willscott/go-nfs v0.0.2
 	github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00

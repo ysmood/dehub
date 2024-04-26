@@ -1,6 +1,7 @@
 package dehub
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,12 +14,12 @@ import (
 	"github.com/ysmood/myip"
 )
 
-func NewHub(logHandler slog.Handler) *Hub {
+func NewHub() *Hub {
 	h := &Hub{
-		l:    slog.New(logHandler),
-		list: xsync.Map[ServantName, *yamux.Session]{},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		list:   xsync.Map[ServantID, *yamux.Session]{},
 		db: &memDB{
-			list: xsync.Map[ServantName, string]{},
+			list: xsync.Map[ServantID, string]{},
 		},
 		addr: "",
 		GetIP: func() (string, error) {
@@ -31,10 +32,10 @@ func NewHub(logHandler slog.Handler) *Hub {
 	return h
 }
 
-func connectHub(conn net.Conn, typ ClientType, name ServantName) error {
+func connectHub(conn net.Conn, typ ClientType, name ServantID) error {
 	writeMsg(conn, &HubHeader{
 		Type: typ,
-		Name: name,
+		ID:   name,
 	})
 
 	res, err := readMsg[string](conn)
@@ -52,7 +53,7 @@ func connectHub(conn net.Conn, typ ClientType, name ServantName) error {
 func (h *Hub) Handle(conn net.Conn) {
 	header, err := readMsg[HubHeader](conn)
 	if err != nil {
-		h.l.Error("Failed to read header", slog.Any("err", err))
+		h.Logger.Error("Failed to read header", slog.Any("err", err))
 		writeMsg(conn, "Failed to read header: "+err.Error())
 		return
 	}
@@ -68,7 +69,7 @@ func (h *Hub) Handle(conn net.Conn) {
 	}
 
 	if err != nil {
-		h.l.Error("Failed to handle", slog.Any("err", err))
+		h.Logger.Error("Failed to handle", slog.Any("err", err))
 
 		_ = conn.Close()
 	}
@@ -80,20 +81,20 @@ func (h *Hub) handleServant(conn net.Conn, header *HubHeader) error {
 		return fmt.Errorf("failed to create yamux session: %w", err)
 	}
 
-	h.list.Store(header.Name, tunnel)
+	h.list.Store(header.ID, tunnel)
 
-	err = h.db.StoreLocation(header.Name, h.addr)
+	err = h.db.StoreLocation(header.ID, h.addr)
 	if err != nil {
 		return fmt.Errorf("failed to store location: %w", err)
 	}
 
-	h.l.Info("servant connected", slog.String("name", header.Name.String()))
+	h.Logger.Info("servant connected", slog.String("name", header.ID.String()))
 
 	<-tunnel.CloseChan()
 
-	h.l.Info("servant disconnected", slog.String("name", header.Name.String()))
+	h.Logger.Info("servant disconnected", slog.String("name", header.ID.String()))
 
-	h.list.Delete(header.Name)
+	h.list.Delete(header.ID)
 
 	_ = conn.Close()
 
@@ -103,7 +104,7 @@ func (h *Hub) handleServant(conn net.Conn, header *HubHeader) error {
 func (h *Hub) handleMaster(conn net.Conn, header *HubHeader) error {
 	defer func() { _ = conn.Close() }()
 
-	addr, err := h.db.LoadLocation(header.Name)
+	addr, err := h.db.LoadLocation(header.ID)
 	if err != nil {
 		return fmt.Errorf("failed to load location: %w", err)
 	}
@@ -115,7 +116,7 @@ func (h *Hub) handleMaster(conn net.Conn, header *HubHeader) error {
 
 	defer func() { _ = relay.Close() }()
 
-	writeMsg(relay, header.Name)
+	writeMsg(relay, header.ID)
 
 	res, err := readMsg[string](relay)
 	if err != nil {
@@ -126,7 +127,7 @@ func (h *Hub) handleMaster(conn net.Conn, header *HubHeader) error {
 		return fmt.Errorf("relay response error: %s", *res)
 	}
 
-	h.l.Info("master connected to hub", slog.String("name", header.Name.String()))
+	h.Logger.Info("master connected to hub", slog.String("name", header.ID.String()))
 
 	go func() {
 		_, _ = io.Copy(relay, conn)
@@ -135,7 +136,7 @@ func (h *Hub) handleMaster(conn net.Conn, header *HubHeader) error {
 
 	_, _ = io.Copy(conn, relay)
 
-	h.l.Info("master disconnected", slog.String("name", header.Name.String()))
+	h.Logger.Info("master disconnected", slog.String("name", header.ID.String()))
 
 	return nil
 }
@@ -157,7 +158,11 @@ func (h *Hub) startRelay() {
 		for {
 			conn, err := relay.Accept()
 			if err != nil {
-				h.l.Error("failed to accept", slog.Any("err", err))
+				if errors.Is(err, io.EOF) {
+					return
+				}
+
+				h.Logger.Error("failed to accept", slog.Any("err", err))
 
 				return
 			}
@@ -167,26 +172,26 @@ func (h *Hub) startRelay() {
 
 				err = h.handleRelay(conn)
 				if err != nil {
-					h.l.Error("failed to handle relay", slog.Any("err", err))
+					h.Logger.Error("failed to handle relay", slog.Any("err", err))
 					writeMsg(conn, err.Error())
 					return
 				}
 
-				h.l.Info("relay disconnected")
+				h.Logger.Info("relay disconnected")
 			}()
 		}
 	}()
 }
 
 func (h *Hub) handleRelay(conn net.Conn) error {
-	name, err := readMsg[ServantName](conn)
+	name, err := readMsg[ServantID](conn)
 	if err != nil {
 		return fmt.Errorf("failed to read servant name: %w", err)
 	}
 
 	var servant *yamux.Session
 
-	h.list.Range(func(key ServantName, value *yamux.Session) bool {
+	h.list.Range(func(key ServantID, value *yamux.Session) bool {
 		if strings.HasPrefix(key.String(), name.String()) {
 			servant = value
 
@@ -202,10 +207,14 @@ func (h *Hub) handleRelay(conn net.Conn) error {
 
 	startTunnel(conn)
 
-	h.l.Info("relay connected", slog.String("name", name.String()))
+	h.Logger.Info("relay connected", slog.String("name", name.String()))
 
 	tunnel, err := servant.Open()
 	if err != nil {
+		if errors.Is(err, yamux.ErrSessionShutdown) {
+			return nil
+		}
+
 		return fmt.Errorf("failed to open stream: %w", err)
 	}
 
@@ -222,16 +231,16 @@ func (h *Hub) handleRelay(conn net.Conn) error {
 }
 
 type memDB struct {
-	list xsync.Map[ServantName, string]
+	list xsync.Map[ServantID, string]
 }
 
-func (db *memDB) StoreLocation(name ServantName, addr string) error {
+func (db *memDB) StoreLocation(name ServantID, addr string) error {
 	db.list.Store(name, addr)
 
 	return nil
 }
 
-func (db *memDB) LoadLocation(name ServantName) (string, error) {
+func (db *memDB) LoadLocation(name ServantID) (string, error) {
 	addr, ok := db.list.Load(name)
 	if !ok {
 		return "", fmt.Errorf("servant not found: %s", name.String())

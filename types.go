@@ -1,7 +1,9 @@
 package dehub
 
 import (
+	"crypto/md5"
 	"log/slog"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/hashicorp/yamux"
@@ -9,13 +11,13 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type ServantName string
+type ServantID string
 
 type Hub struct {
-	l    *slog.Logger
-	list xsync.Map[ServantName, *yamux.Session]
-	db   DB
-	addr string // The net address of the hub node relay.
+	Logger *slog.Logger
+	list   xsync.Map[ServantID, *yamux.Session]
+	db     DB
+	addr   string // The net address of the hub node relay.
 
 	GetIP func() (string, error)
 }
@@ -29,29 +31,38 @@ const (
 
 type HubHeader struct {
 	Type ClientType
-	Name ServantName
+	ID   ServantID
 }
 
 // DB store the location of which hub node the servant is connected to.
 type DB interface {
-	StoreLocation(name ServantName, netAddr string) error
-	LoadLocation(name ServantName) (netAddr string, err error)
+	StoreLocation(id ServantID, netAddr string) error
+	LoadLocation(id ServantID) (netAddr string, err error)
 }
 
 type Master struct {
-	l      *slog.Logger
-	prvKey []byte
-	name   ServantName
+	Logger    *slog.Logger
+	prvKey    []byte
+	servantID ServantID
 }
 
 type Servant struct {
-	l       *slog.Logger
-	pubKeys []string
-	name    ServantName
+	Logger      *slog.Logger
+	SignTimeout time.Duration
+	pubKeys     PubKeys
+	id          ServantID
+}
+
+type PubKeys map[[md5.Size]byte]PubKey
+
+type PubKey struct {
+	raw       string
+	sshPubKey ssh.PublicKey
 }
 
 type TunnelHeader struct {
 	Timestamp    []byte
+	PubKeyHash   [md5.Size]byte
 	Sign         *ssh.Signature
 	Command      Command
 	ExecMeta     *ExecMeta

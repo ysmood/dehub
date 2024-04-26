@@ -35,6 +35,9 @@ linters-settings:
   gocyclo:
     min-complexity: 15
 
+  cyclop:
+    max-complexity: 12
+
 issues:
   exclude-use-default: false
   exclude-dirs-use-default: false

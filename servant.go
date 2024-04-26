@@ -1,6 +1,7 @@
 package dehub
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/creack/pty"
@@ -21,38 +23,60 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func (n ServantName) String() string {
+const DefaultSignTimeout = 10 * time.Second
+
+func (n ServantID) String() string {
 	return string(n)
 }
 
-func NewServant(logHandler slog.Handler, name ServantName, pubKeys []string) *Servant {
+func NewServant(id ServantID, pubKeys []string) *Servant {
+	keys := PubKeys{}
+	for _, raw := range pubKeys {
+		key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(raw))
+		if err != nil {
+			panic(err)
+		}
+
+		hash, err := publicKeyHash(key)
+		if err != nil {
+			panic(err)
+		}
+
+		keys[hash] = PubKey{raw: strings.TrimSpace(raw), sshPubKey: key}
+	}
+
 	return &Servant{
-		l:       slog.New(logHandler),
-		name:    name,
-		pubKeys: pubKeys,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		SignTimeout: DefaultSignTimeout,
+		id:          id,
+		pubKeys:     keys,
 	}
 }
 
 func (s *Servant) Handle(conn net.Conn) func() {
-	err := connectHub(conn, ClientTypeServant, s.name)
+	err := connectHub(conn, ClientTypeServant, s.id)
 	if err != nil {
-		s.l.Error("Failed to connect to hub", slog.Any("err", err))
+		s.Logger.Error("Failed to connect to hub", slog.Any("err", err))
 		return func() {}
 	}
 
 	server, err := yamux.Server(conn, nil)
 	if err != nil {
-		s.l.Error("Failed to create yamux server", slog.Any("err", err))
+		s.Logger.Error("Failed to create yamux server", slog.Any("err", err))
 		return func() {}
 	}
 
-	s.l.Info("servant connected to hub", slog.String("servant", s.name.String()))
+	s.Logger.Info("servant connected to hub", slog.String("servant", s.id.String()))
 
 	return func() {
 		for {
 			conn, err := server.Accept()
 			if err != nil {
-				s.l.Error("Failed to accept connection", slog.Any("err", err))
+				if errors.Is(err, io.EOF) {
+					return
+				}
+
+				s.Logger.Error("Failed to accept connection", slog.Any("err", err))
 				return
 			}
 
@@ -74,46 +98,45 @@ func (s *Servant) startTunnel(conn net.Conn) error {
 		return fmt.Errorf("failed to read header: %w", err)
 	}
 
-	var t time.Time
-
-	err = json.Unmarshal(header.Timestamp, &t)
-	if err != nil {
-		return fmt.Errorf("invalid timestamp in header: %w", err)
-	}
-
-	if time.Since(t) > 10*time.Second {
-		return errors.New("header has expired")
-	}
-
-	if !s.auth(header) {
-		return errors.New("not authorized")
+	if err := s.verifySign(header); err != nil {
+		return fmt.Errorf("failed to verify sign: %w", err)
 	}
 
 	return s.serve(header, conn)
 }
 
-func (s *Servant) auth(header *TunnelHeader) bool {
-	for _, raw := range s.pubKeys {
-		pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(raw))
-		if err != nil {
-			s.l.Error("failed to parse public key", slog.Any("err", err))
-			return false
-		}
+func (s *Servant) verifySign(header *TunnelHeader) error {
+	var t time.Time
 
-		err = pubKey.Verify(header.Timestamp, header.Sign)
-		if err != nil {
-			s.l.Error("invalid signature", slog.Any("err", err))
-		} else {
-			s.l.Info("authorized", slog.String("key", raw))
-			return true
-		}
+	err := json.Unmarshal(header.Timestamp, &t)
+	if err != nil {
+		return fmt.Errorf("invalid timestamp in header: %w", err)
 	}
 
-	return false
+	if time.Since(t) > s.SignTimeout {
+		return errors.New("timestamp expired")
+	}
+
+	key, ok := s.pubKeys[header.PubKeyHash]
+	if !ok {
+		s.Logger.Error("public key not found", slog.Any("hash", header.PubKeyHash))
+		return errors.New("public key not found")
+	}
+
+	err = key.sshPubKey.Verify(header.Timestamp, header.Sign)
+	if err != nil {
+		return fmt.Errorf("failed to verify signature: %w", err)
+	}
+
+	s.Logger.Info("authorized",
+		slog.String("key", key.raw),
+		slog.String("hash", hex.EncodeToString(header.PubKeyHash[:])))
+
+	return nil
 }
 
 func (s *Servant) serve(h *TunnelHeader, conn net.Conn) error {
-	s.l.Info("master connected", slog.Any("command", h.Command))
+	s.Logger.Info("master connected", slog.Any("command", h.Command))
 
 	switch h.Command {
 	case CommandExec:
@@ -152,7 +175,7 @@ func (s *Servant) forwardSocks5(conn net.Conn) error {
 
 	tunnel, err := yamux.Server(conn, nil)
 	if err != nil {
-		s.l.Error("Failed to create yamux session", slog.Any("err", err))
+		s.Logger.Error("Failed to create yamux session", slog.Any("err", err))
 		return nil
 	}
 
@@ -161,7 +184,11 @@ func (s *Servant) forwardSocks5(conn net.Conn) error {
 	for {
 		stream, err := tunnel.AcceptStream()
 		if err != nil {
-			s.l.Error("Failed to accept stream", slog.Any("err", err))
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+
+			s.Logger.Error("Failed to accept stream", slog.Any("err", err))
 			return nil
 		}
 
@@ -196,7 +223,7 @@ func (s *Servant) shareDir(conn net.Conn, meta *MountDirMeta) error {
 			return nil
 		}
 
-		s.l.Error("failed to serve nfs", "err", err)
+		s.Logger.Error("failed to serve nfs", "err", err)
 	}
 
 	return nil

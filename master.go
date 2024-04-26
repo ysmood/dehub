@@ -3,6 +3,7 @@ package dehub
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,16 +17,16 @@ import (
 	"golang.org/x/term"
 )
 
-func NewMaster(logHandler slog.Handler, name ServantName, privateKey []byte) *Master {
+func NewMaster(id ServantID, privateKey []byte) *Master {
 	return &Master{
-		l:      slog.New(logHandler),
-		name:   name,
-		prvKey: privateKey,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		servantID: id,
+		prvKey:    privateKey,
 	}
 }
 
 func (m *Master) Exec(conn net.Conn, in io.Reader, out io.Writer, cmd string, args ...string) error {
-	err := connectHub(conn, ClientTypeMaster, m.name)
+	err := connectHub(conn, ClientTypeMaster, m.servantID)
 	if err != nil {
 		return fmt.Errorf("failed to connect to hub: %w", err)
 	}
@@ -69,7 +70,7 @@ func (m *Master) Exec(conn net.Conn, in io.Reader, out io.Writer, cmd string, ar
 }
 
 func (m *Master) ForwardSocks5(conn net.Conn, listenTo net.Listener) error {
-	err := connectHub(conn, ClientTypeMaster, m.name)
+	err := connectHub(conn, ClientTypeMaster, m.servantID)
 	if err != nil {
 		return fmt.Errorf("failed to connect to hub: %w", err)
 	}
@@ -91,29 +92,37 @@ func (m *Master) ForwardSocks5(conn net.Conn, listenTo net.Listener) error {
 	for {
 		src, err := listenTo.Accept()
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+
 			return fmt.Errorf("failed to accept sock5 connection: %w", err)
 		}
 
-		m.l.Info("new socks5 connection")
+		m.Logger.Info("new socks5 connection")
 
 		go func() {
 			stream, err := tunnel.Open()
 			if err != nil {
-				m.l.Error("failed to open yamux tunnel", "err", err.Error())
+				if errors.Is(err, yamux.ErrSessionShutdown) {
+					return
+				}
+
+				m.Logger.Error("failed to open yamux tunnel", "err", err.Error())
 				return
 			}
 
 			go func() {
 				_, err := io.Copy(stream, src)
 				if err != nil {
-					m.l.Error(err.Error())
+					m.Logger.Error(err.Error())
 				}
 				_ = stream.Close()
 			}()
 
 			_, err = io.Copy(src, stream)
 			if err != nil {
-				m.l.Error(err.Error())
+				m.Logger.Error(err.Error())
 			}
 			_ = src.Close()
 		}()
@@ -125,7 +134,7 @@ func (m *Master) ServeNFS(conn net.Conn, remoteDir string, fsSrv net.Listener, c
 		cacheLimit = 2048
 	}
 
-	err := connectHub(conn, ClientTypeMaster, m.name)
+	err := connectHub(conn, ClientTypeMaster, m.servantID)
 	if err != nil {
 		return fmt.Errorf("failed to connect to hub: %w", err)
 	}
@@ -181,6 +190,13 @@ func (h *TunnelHeader) sign(keyData []byte) error {
 		return fmt.Errorf("failed to parse private key: %w", err)
 	}
 
+	hash, err := publicKeyHash(key.PublicKey())
+	if err != nil {
+		return err
+	}
+
+	h.PubKeyHash = hash
+
 	t, err := json.Marshal(time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to marshal timestamp: %w", err)
@@ -203,13 +219,21 @@ func (m *Master) serveNFS(tunnel *yamux.Session, fServer net.Listener) {
 		for {
 			fConn, err := fServer.Accept()
 			if err != nil {
-				m.l.Error("Failed to accept connection", slog.Any("err", err))
+				if errors.Is(err, io.EOF) {
+					return
+				}
+
+				m.Logger.Error("failed to accept nfs connection", slog.Any("err", err))
 				return
 			}
 
 			nfs, err := tunnel.Open()
 			if err != nil {
-				m.l.Error("Failed to open yamux stream", slog.Any("err", err))
+				if errors.Is(err, yamux.ErrSessionShutdown) {
+					return
+				}
+
+				m.Logger.Error("failed to open nfs yamux stream", slog.Any("err", err))
 				return
 			}
 

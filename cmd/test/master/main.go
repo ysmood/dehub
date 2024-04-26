@@ -1,20 +1,20 @@
 package main
 
 import (
-	"io"
 	"log/slog"
 	"net"
 	"os"
 
+	"github.com/lmittmann/tint"
 	"github.com/ysmood/dehub"
+	"github.com/ysmood/dehub/lib/utils"
 )
 
 func main() {
-	log := slog.NewJSONHandler(io.Discard, nil)
-
 	hubAddr := "127.0.0.1:8813"
 
-	master := dehub.NewMaster(log, "test", readFile("lib/fixtures/id_ed25519"))
+	master := dehub.NewMaster("test", readFile("lib/fixtures/id_ed25519"))
+	master.Logger = slog.New(tint.NewHandler(os.Stdout, nil))
 
 	// Forward socks5
 	go func() {
@@ -26,32 +26,30 @@ func main() {
 
 	// Forward dir
 	{
-		fsSrv, err := net.Listen("tcp", ":0")
+		fsSrv, err := net.Listen("tcp", "127.0.0.1:0")
 		E(err)
 
-		slog.Info("nfs server on", "addr", fsSrv.Addr().String())
+		go func() { E(master.ServeNFS(dial(hubAddr), "lib/fixtures", fsSrv, 0)) }()
+		master.Logger.Info("nfs server on", "addr", fsSrv.Addr().String())
 
-		go func() {
-			E(master.ServeNFS(dial(hubAddr), "lib/fixtures", fsSrv, 0))
+		localDir, err := os.MkdirTemp("", "dehub-nfs")
+		E(err)
+
+		E(utils.MountNFS(fsSrv.Addr().(*net.TCPAddr), localDir))
+		defer func() {
+			E(utils.UnmountNFS(localDir))
+			master.Logger.Info("nfs unmounted", "dir", localDir)
 		}()
+		master.Logger.Info("nfs mounted", "dir", localDir)
 	}
 
 	// Forward shell
 	E(master.Exec(dial(hubAddr), os.Stdin, os.Stdout, "sh"))
-
-	for _, conn := range connList {
-		_ = conn.Close()
-	}
 }
-
-var connList []net.Conn
 
 func dial(addr string) net.Conn {
 	conn, err := net.Dial("tcp", addr)
 	E(err)
-
-	connList = append(connList, conn)
-
 	return conn
 }
 
