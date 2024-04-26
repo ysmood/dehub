@@ -24,15 +24,17 @@ func main() {
 		E(master.ForwardSocks5(dial(hubAddr), l))
 	}()
 
-	dir, err := os.MkdirTemp("", "dehub-nfs")
-	E(err)
-
-	slog.Info("mount dir", "dir", dir)
-
 	// Forward dir
-	go func() {
-		E(master.MountDir(dial(hubAddr), "lib/fixtures", dir, 0))
-	}()
+	{
+		fsSrv, err := net.Listen("tcp", ":0")
+		E(err)
+
+		slog.Info("nfs server on", "addr", fsSrv.Addr().String())
+
+		go func() {
+			E(master.ServeNFS(dial(hubAddr), "lib/fixtures", fsSrv, 0))
+		}()
+	}
 
 	// Forward shell
 	E(master.Exec(dial(hubAddr), os.Stdin, os.Stdout, "sh"))

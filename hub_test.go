@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"testing"
-	"time"
 
+	nfsc "github.com/willscott/go-nfs-client/nfs"
+	rpc "github.com/willscott/go-nfs-client/nfs/rpc"
 	"github.com/ysmood/dehub"
 	"github.com/ysmood/got"
 	"golang.org/x/net/proxy"
@@ -127,12 +127,32 @@ func TestMountDir(t *testing.T) {
 	masterConn, err := net.Dial("tcp", hubSrv.Addr().String())
 	g.E(err)
 
-	dir, err := os.MkdirTemp("", "dehub-nfs")
+	fsSrv, err := net.Listen("tcp", ":0")
 	g.E(err)
 
-	go func() { g.E(master.MountDir(masterConn, "lib/fixtures", dir, 0)) }()
+	go func() { g.E(master.ServeNFS(masterConn, "lib/fixtures", fsSrv, 0)) }()
 
-	time.Sleep(time.Second)
+	g.Eq(
+		g.Read("lib/fixtures/id_ed25519.pub").String(),
+		nfsReadFile(g, fsSrv.Addr().(*net.TCPAddr), "id_ed25519.pub"),
+	)
+}
 
-	g.Desc(logBuf.String()).True(g.PathExists(dir + "/id_ed25519.pub"))
+func nfsReadFile(g got.G, addr *net.TCPAddr, path string) string {
+	c, err := rpc.DialTCP("tcp", addr.String(), false)
+	g.E(err)
+	defer c.Close()
+
+	var mounter nfsc.Mount
+	mounter.Client = c
+	target, err := mounter.Mount("/", rpc.AuthNull)
+	g.E(err)
+	defer func() {
+		_ = mounter.Unmount()
+	}()
+
+	f, err := target.Open(path)
+	g.E(err)
+
+	return g.Read(f).String()
 }

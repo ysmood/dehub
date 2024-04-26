@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/creack/pty"
@@ -122,7 +120,7 @@ func (m *Master) ForwardSocks5(conn net.Conn, listenTo net.Listener) error {
 	}
 }
 
-func (m *Master) MountDir(conn net.Conn, remoteDir, localDir string, cacheLimit int) error {
+func (m *Master) ServeNFS(conn net.Conn, remoteDir string, fsSrv net.Listener, cacheLimit int) error {
 	if cacheLimit <= 0 {
 		cacheLimit = 2048
 	}
@@ -145,28 +143,16 @@ func (m *Master) MountDir(conn net.Conn, remoteDir, localDir string, cacheLimit 
 		return fmt.Errorf("failed to handshake: %w", err)
 	}
 
-	err = os.MkdirAll(localDir, 0o755) //nolint: gomnd
+	tunnel, err := yamux.Client(conn, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create mount directory: %w", err)
+		return fmt.Errorf("failed to create yamux session: %w", err)
 	}
 
-	list, err := os.ReadDir(localDir)
-	if err != nil {
-		return fmt.Errorf("failed to read directory: %w", err)
-	}
+	m.serveNFS(tunnel, fsSrv)
 
-	if len(list) > 0 {
-		return fmt.Errorf("mount to non-empty dir is not allowed: %s", localDir)
-	}
+	<-tunnel.CloseChan()
 
-	fServer, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("failed to create file server: %w", err)
-	}
-
-	defer func() { _ = fServer.Close() }()
-
-	return m.mountNFS(conn, localDir, fServer)
+	return nil
 }
 
 func (m *Master) handshake(conn net.Conn, header *TunnelHeader) error {
@@ -208,41 +194,6 @@ func (h *TunnelHeader) sign(keyData []byte) error {
 	}
 
 	h.Sign = sig
-
-	return nil
-}
-
-func (m *Master) mountNFS(conn net.Conn, localDir string, fServer net.Listener) error {
-	tunnel, err := yamux.Client(conn, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create yamux session: %w", err)
-	}
-
-	m.serveNFS(tunnel, fServer)
-
-	port := strconv.Itoa(fServer.Addr().(*net.TCPAddr).Port)
-
-	_ = exec.Command("umount", "-f", localDir).Run()
-
-	out, err := exec.Command("mount",
-		"-o", fmt.Sprintf("port=%s,mountport=%s", port, port),
-		"-t", "nfs",
-		"127.0.0.1:",
-		localDir,
-	).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to mount nfs: %w: %s", err, out)
-	}
-
-	m.l.Info("nfs mounted", slog.String("path", localDir))
-
-	<-tunnel.CloseChan()
-
-	m.l.Info("nfs tunnel closed", slog.String("path", localDir))
-
-	out, _ = exec.Command("umount", "-f", localDir).CombinedOutput()
-
-	m.l.Info("nfs unmounted", slog.String("path", localDir), slog.String("out", string(out)))
 
 	return nil
 }
