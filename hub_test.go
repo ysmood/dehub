@@ -6,14 +6,15 @@ import (
 	"net/http"
 	"testing"
 
-	nfsc "github.com/willscott/go-nfs-client/nfs"
-	rpc "github.com/willscott/go-nfs-client/nfs/rpc"
+	"github.com/willscott/go-nfs-client/nfs"
+	"github.com/willscott/go-nfs-client/nfs/rpc"
 	"github.com/ysmood/dehub"
 	"github.com/ysmood/got"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/proxy"
 )
 
-func TestBasic(t *testing.T) {
+func TestExec(t *testing.T) {
 	g := got.T(t)
 
 	hub := dehub.NewHub()
@@ -21,9 +22,9 @@ func TestBasic(t *testing.T) {
 		return "127.0.0.1", nil
 	}
 
-	servant := dehub.NewServant("test", []string{g.Read("lib/fixtures/id_ed25519.pub").String()})
+	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
 
-	master := dehub.NewMaster("test", g.Read("lib/fixtures/id_ed25519").Bytes())
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
 
 	hubSrv, err := net.Listen("tcp", ":0")
 	g.E(err)
@@ -47,29 +48,25 @@ func TestBasic(t *testing.T) {
 	masterConn, err := net.Dial("tcp", hubSrv.Addr().String())
 	g.E(err)
 
+	g.E(master.Connect(masterConn))
+
 	txt := g.RandStr(1024)
 
 	out := bytes.NewBuffer(nil)
-	err = master.Exec(masterConn, bytes.NewBuffer(nil), out, "echo", txt)
+	err = master.Exec(bytes.NewBuffer(nil), out, "echo", txt)
 	g.E(err)
 	g.Has(out.String(), txt)
 
-	proxy, err := net.Listen("tcp", ":0")
+	proxyServer, err := net.Listen("tcp", ":0")
 	g.E(err)
 
-	masterConn, err = net.Dial("tcp", hubSrv.Addr().String())
-	g.E(err)
+	go func() { g.E(master.ForwardSocks5(proxyServer)) }()
 
-	go func() { g.E(master.ForwardSocks5(masterConn, proxy)) }()
-
-	res := getWithProxy(g, proxy.Addr().String(), "http://example.com")
+	res := reqViaProxy(g, proxyServer.Addr().String(), "http://example.com")
 	g.Has(res, "Example Domain")
-
-	masterConn, err = net.Dial("tcp", hubSrv.Addr().String())
-	g.E(err)
 }
 
-func getWithProxy(g got.G, proxyHost string, u string) string {
+func reqViaProxy(g got.G, proxyHost string, u string) string {
 	dialer, err := proxy.SOCKS5("tcp", proxyHost, nil, proxy.Direct)
 	g.E(err)
 
@@ -93,9 +90,9 @@ func TestMountDir(t *testing.T) {
 		return "127.0.0.1", nil
 	}
 
-	servant := dehub.NewServant("test", []string{g.Read("lib/fixtures/id_ed25519.pub").String()})
+	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
 
-	master := dehub.NewMaster("test", g.Read("lib/fixtures/id_ed25519").Bytes())
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
 
 	hubSrv, err := net.Listen("tcp", ":0")
 	g.E(err)
@@ -119,10 +116,12 @@ func TestMountDir(t *testing.T) {
 	masterConn, err := net.Dial("tcp", hubSrv.Addr().String())
 	g.E(err)
 
+	g.E(master.Connect(masterConn))
+
 	fsSrv, err := net.Listen("tcp", ":0")
 	g.E(err)
 
-	go func() { g.E(master.ServeNFS(masterConn, "lib/fixtures", fsSrv, 0)) }()
+	go func() { g.E(master.ServeNFS("lib/fixtures", fsSrv, 0)) }()
 
 	g.Eq(
 		g.Read("lib/fixtures/id_ed25519.pub").String(),
@@ -135,7 +134,7 @@ func nfsReadFile(g got.G, addr *net.TCPAddr, path string) string {
 	g.E(err)
 	defer c.Close()
 
-	var mounter nfsc.Mount
+	var mounter nfs.Mount
 	mounter.Client = c
 	target, err := mounter.Mount("/", rpc.AuthNull)
 	g.E(err)
@@ -147,4 +146,14 @@ func nfsReadFile(g got.G, addr *net.TCPAddr, path string) string {
 	g.E(err)
 
 	return g.Read(f).String()
+}
+
+func prvKey(g got.G) ssh.Signer {
+	key, err := ssh.ParsePrivateKey(g.Read("lib/fixtures/id_ed25519").Bytes())
+	g.E(err)
+	return key
+}
+
+func pubKey(g got.G) []byte {
+	return g.Read("lib/fixtures/id_ed25519.pub").Bytes()
 }

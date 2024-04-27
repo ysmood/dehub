@@ -2,6 +2,7 @@
   "words": [
     "creack",
     "dehub",
+    "errchkjson",
     "funlen",
     "Getsize",
     "gomnd",
@@ -12,6 +13,8 @@
     "nolint",
     "osfs",
     "osfsx",
+    "pubkey",
+    "Setsize",
     "willscott",
     "Winsize",
     "xsync",

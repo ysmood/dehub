@@ -7,6 +7,7 @@ import (
 
 	"github.com/lmittmann/tint"
 	"github.com/ysmood/dehub"
+	shared "github.com/ysmood/dehub/cmd/test"
 )
 
 func main() {
@@ -16,11 +17,11 @@ func main() {
 		return "127.0.0.1", nil
 	}
 
-	servant := dehub.NewServant("test", []string{string(readFile("lib/fixtures/id_ed25519.pub"))})
+	servant := dehub.NewServant("test", shared.PrivateKey(), shared.PublicKey())
 	servant.Logger = slog.New(tint.NewHandler(os.Stdout, nil))
 
 	hubSrv, err := net.Listen("tcp", ":8813")
-	E(err)
+	shared.E(err)
 
 	hubAddr := hubSrv.Addr().String()
 
@@ -35,23 +36,5 @@ func main() {
 		}
 	}()
 
-	servant.Handle(dial(hubAddr))()
-}
-
-func dial(addr string) net.Conn {
-	conn, err := net.Dial("tcp", addr)
-	E(err)
-	return conn
-}
-
-func E(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func readFile(path string) []byte {
-	b, err := os.ReadFile(path)
-	E(err)
-	return b
+	servant.Handle(shared.Dial(hubAddr))()
 }

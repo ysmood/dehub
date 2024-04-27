@@ -1,10 +1,8 @@
 package dehub
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -25,31 +23,44 @@ import (
 
 const DefaultSignTimeout = 10 * time.Second
 
+const PubKeyRawKey = "pubkey-raw"
+
 func (n ServantID) String() string {
 	return string(n)
 }
 
-func NewServant(id ServantID, pubKeys []string) *Servant {
+func NewServant(id ServantID, prvKey ssh.Signer, pubKeys ...[]byte) *Servant {
 	keys := PubKeys{}
 	for _, raw := range pubKeys {
-		key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(raw))
+		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
 		if err != nil {
 			panic(err)
 		}
 
-		hash, err := publicKeyHash(key)
-		if err != nil {
-			panic(err)
-		}
-
-		keys[hash] = PubKey{raw: strings.TrimSpace(raw), sshPubKey: key}
+		keys[ssh.FingerprintSHA256(key)] = PubKey{raw: strings.TrimSpace(string(raw)), sshPubKey: key}
 	}
+
+	sshConf := &ssh.ServerConfig{
+		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			fp := ssh.FingerprintSHA256(key)
+			if _, ok := keys[fp]; ok {
+				return &ssh.Permissions{
+					Extensions: map[string]string{PubKeyRawKey: keys[fp].raw},
+				}, nil
+			}
+
+			return nil, errors.New("public key not found")
+		},
+	}
+
+	sshConf.AddHostKey(prvKey)
 
 	return &Servant{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SignTimeout: DefaultSignTimeout,
 		id:          id,
 		pubKeys:     keys,
+		sshConf:     sshConf,
 	}
 }
 
@@ -80,103 +91,98 @@ func (s *Servant) Handle(conn net.Conn) func() {
 				return
 			}
 
-			go func() {
-				defer func() { _ = conn.Close() }()
-
-				err := s.startTunnel(conn)
-				if err != nil {
-					writeMsg(conn, err.Error())
-				}
-			}()
+			go s.serve(conn)
 		}
 	}
 }
 
-func (s *Servant) startTunnel(conn net.Conn) error {
-	header, err := readMsg[TunnelHeader](conn)
+func (s *Servant) serve(conn net.Conn) {
+	defer func() { _ = conn.Close() }()
+
+	sshConn, channels, _, err := ssh.NewServerConn(conn, s.sshConf)
 	if err != nil {
-		return fmt.Errorf("failed to read header: %w", err)
+		s.Logger.Error("Failed to handshake", "err", err)
+		return
 	}
 
-	if err := s.verifySign(header); err != nil {
-		return fmt.Errorf("failed to verify sign: %w", err)
-	}
+	s.Logger.Info("authorized", "pubkey-fingerprint", sshConn.Permissions.Extensions[PubKeyRawKey])
 
-	return s.serve(header, conn)
+	for newChan := range channels {
+		switch Command(newChan.ChannelType()) {
+		case CommandExec:
+			go s.exec(newChan)
+		case CommandForwardSocks5:
+			go s.forwardSocks5(newChan)
+		case CommandShareDir:
+			go s.shareDir(newChan)
+		}
+	}
 }
 
-func (s *Servant) verifySign(header *TunnelHeader) error {
-	var t time.Time
-
-	err := json.Unmarshal(header.Timestamp, &t)
+func (s *Servant) exec(newChan ssh.NewChannel) {
+	var meta ExecMeta
+	err := json.Unmarshal(newChan.ExtraData(), &meta)
 	if err != nil {
-		return fmt.Errorf("invalid timestamp in header: %w", err)
+		_ = newChan.Reject(UnmarshalMetaFailed, err.Error())
+		return
 	}
 
-	if time.Since(t) > s.SignTimeout {
-		return errors.New("timestamp expired")
-	}
-
-	key, ok := s.pubKeys[header.PubKeyHash]
-	if !ok {
-		s.Logger.Error("public key not found", slog.Any("hash", header.PubKeyHash))
-		return errors.New("public key not found")
-	}
-
-	err = key.sshPubKey.Verify(header.Timestamp, header.Sign)
-	if err != nil {
-		return fmt.Errorf("failed to verify signature: %w", err)
-	}
-
-	s.Logger.Info("authorized",
-		slog.String("key", key.raw),
-		slog.String("hash", hex.EncodeToString(header.PubKeyHash[:])))
-
-	return nil
-}
-
-func (s *Servant) serve(h *TunnelHeader, conn net.Conn) error {
-	s.Logger.Info("master connected", slog.Any("command", h.Command))
-
-	switch h.Command {
-	case CommandExec:
-		return s.exec(conn, h.ExecMeta)
-	case CommandForwardSocks5:
-		return s.forwardSocks5(conn)
-	case CommandShareDir:
-		return s.shareDir(conn, h.ShareDirMeta)
-	}
-
-	return fmt.Errorf("unknown command: %d", h.Command)
-}
-
-func (s *Servant) exec(conn net.Conn, meta *ExecMeta) error {
 	c := exec.Command(meta.Cmd, meta.Args...)
 	defer func() { _ = c.Process.Kill() }()
 
 	p, err := pty.StartWithSize(c, meta.Size)
 	if err != nil {
-		return fmt.Errorf("failed to start pty: %w", err)
+		_ = newChan.Reject(FailedStartPTY, err.Error())
+		return
+	}
+
+	ch, reqs, err := newChan.Accept()
+	if err != nil {
+		s.Logger.Error("Failed to accept exec channel", "err", err)
+		return
 	}
 
 	defer func() { _ = p.Close() }()
 
-	startTunnel(conn)
+	go func() {
+		for req := range reqs {
+			if req.Type == ExecResizeRequest {
+				var size pty.Winsize
+				err := json.Unmarshal(req.Payload, &size)
+				if err != nil {
+					s.Logger.Error("Failed to unmarshal terminal size", "err", err)
+					return
+				}
 
-	go func() { _, _ = io.Copy(p, conn) }()
+				err = pty.Setsize(p, &size)
+				if err != nil {
+					s.Logger.Error("Failed to set terminal size", "err", err)
+					return
+				}
+			} else {
+				s.Logger.Error("Unknown exec request type", "req", req.Type)
+			}
+		}
+	}()
 
-	_, _ = io.Copy(conn, p)
+	go func() { _, _ = io.Copy(p, ch) }()
 
-	return nil
+	_, _ = io.Copy(ch, p)
+
+	_ = ch.Close()
 }
 
-func (s *Servant) forwardSocks5(conn net.Conn) error {
-	startTunnel(conn)
+func (s *Servant) forwardSocks5(newChan ssh.NewChannel) {
+	ch, _, err := newChan.Accept()
+	if err != nil {
+		s.Logger.Error("Failed to accept socks5 channel", "err", err)
+		return
+	}
 
-	tunnel, err := yamux.Server(conn, nil)
+	tunnel, err := yamux.Server(ch, nil)
 	if err != nil {
 		s.Logger.Error("Failed to create yamux session", slog.Any("err", err))
-		return nil
+		return
 	}
 
 	proxy := socks5.NewServer()
@@ -185,11 +191,11 @@ func (s *Servant) forwardSocks5(conn net.Conn) error {
 		stream, err := tunnel.AcceptStream()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil
+				return
 			}
 
 			s.Logger.Error("Failed to accept stream", slog.Any("err", err))
-			return nil
+			return
 		}
 
 		go func() {
@@ -198,17 +204,28 @@ func (s *Servant) forwardSocks5(conn net.Conn) error {
 	}
 }
 
-func (s *Servant) shareDir(conn net.Conn, meta *MountDirMeta) error {
-	tunnel, err := yamux.Server(conn, nil)
+func (s *Servant) shareDir(newChan ssh.NewChannel) {
+	var meta MountDirMeta
+	err := json.Unmarshal(newChan.ExtraData(), &meta)
 	if err != nil {
-		return fmt.Errorf("failed to create yamux tunnel: %w", err)
+		_ = newChan.Reject(UnmarshalMetaFailed, err.Error())
+		return
+	}
+
+	ch, _, err := newChan.Accept()
+	if err != nil {
+		s.Logger.Error("Failed to accept ShareDir channel", "err", err)
+		return
+	}
+
+	tunnel, err := yamux.Server(ch, nil)
+	if err != nil {
+		s.Logger.Error("Failed to create yamux session", "err", err)
 	}
 
 	if _, err := os.Stat(meta.Path); os.IsNotExist(err) {
-		return fmt.Errorf("remote directory does not exist: %w", err)
+		s.Logger.Error("remote directory does not exist", "path", meta.Path, "err", err)
 	}
-
-	startTunnel(conn)
 
 	bfs := osfs.New(meta.Path)
 	bfsPlusChange := osfsx.New(bfs)
@@ -220,11 +237,9 @@ func (s *Servant) shareDir(conn net.Conn, meta *MountDirMeta) error {
 	err = nfs.Serve(tunnel, cacheHelper)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			return nil
+			return
 		}
 
 		s.Logger.Error("failed to serve nfs", "err", err)
 	}
-
-	return nil
 }

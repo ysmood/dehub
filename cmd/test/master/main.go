@@ -7,60 +7,45 @@ import (
 
 	"github.com/lmittmann/tint"
 	"github.com/ysmood/dehub"
+	shared "github.com/ysmood/dehub/cmd/test"
 	"github.com/ysmood/dehub/lib/utils"
 )
 
 func main() {
 	hubAddr := "127.0.0.1:8813"
 
-	master := dehub.NewMaster("test", readFile("lib/fixtures/id_ed25519"))
+	master := dehub.NewMaster("test", shared.PrivateKey(), shared.PublicKey())
 	master.Logger = slog.New(tint.NewHandler(os.Stdout, nil))
+
+	shared.E(master.Connect(shared.Dial(hubAddr)))
 
 	// Forward socks5
 	go func() {
 		l, err := net.Listen("tcp", ":7777")
-		E(err)
+		shared.E(err)
 
-		E(master.ForwardSocks5(dial(hubAddr), l))
+		shared.E(master.ForwardSocks5(l))
 	}()
 
 	// Forward dir
 	{
 		fsSrv, err := net.Listen("tcp", "127.0.0.1:0")
-		E(err)
+		shared.E(err)
 
-		go func() { E(master.ServeNFS(dial(hubAddr), "lib/fixtures", fsSrv, 0)) }()
+		go func() { shared.E(master.ServeNFS("lib/fixtures", fsSrv, 0)) }()
 		master.Logger.Info("nfs server on", "addr", fsSrv.Addr().String())
 
 		localDir, err := os.MkdirTemp("", "dehub-nfs")
-		E(err)
+		shared.E(err)
 
-		E(utils.MountNFS(fsSrv.Addr().(*net.TCPAddr), localDir))
+		shared.E(utils.MountNFS(fsSrv.Addr().(*net.TCPAddr), localDir))
 		defer func() {
-			E(utils.UnmountNFS(localDir))
+			shared.E(utils.UnmountNFS(localDir))
 			master.Logger.Info("nfs unmounted", "dir", localDir)
 		}()
 		master.Logger.Info("nfs mounted", "dir", localDir)
 	}
 
 	// Forward shell
-	E(master.Exec(dial(hubAddr), os.Stdin, os.Stdout, "sh"))
-}
-
-func dial(addr string) net.Conn {
-	conn, err := net.Dial("tcp", addr)
-	E(err)
-	return conn
-}
-
-func E(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func readFile(path string) []byte {
-	b, err := os.ReadFile(path)
-	E(err)
-	return b
+	shared.E(master.Exec(os.Stdin, os.Stdout, "sh"))
 }

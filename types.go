@@ -42,8 +42,9 @@ type DB interface {
 
 type Master struct {
 	Logger    *slog.Logger
-	prvKey    []byte
 	servantID ServantID
+	sshConf   *ssh.ClientConfig
+	sshConn   ssh.Conn
 }
 
 type Servant struct {
@@ -51,9 +52,10 @@ type Servant struct {
 	SignTimeout time.Duration
 	pubKeys     PubKeys
 	id          ServantID
+	sshConf     *ssh.ServerConfig
 }
 
-type PubKeys map[[md5.Size]byte]PubKey
+type PubKeys map[string]PubKey
 
 type PubKey struct {
 	raw       string
@@ -80,16 +82,23 @@ type MountDirMeta struct {
 	CacheLimit int
 }
 
-type Command int
+type Command string
 
 const (
-	CommandExec Command = iota
-	CommandForwardSocks5
-	CommandShareDir
+	CommandExec          Command = "exec"
+	CommandForwardSocks5 Command = "forward-socks5"
+	CommandShareDir      Command = "share-dir"
 )
+
+const ExecResizeRequest = "resize"
 
 type Logger interface {
 	Info(string, ...slog.Attr)
 	Warn(string, ...slog.Attr)
 	Error(string, ...slog.Attr)
 }
+
+const (
+	UnmarshalMetaFailed ssh.RejectionReason = iota + ssh.ResourceShortage + 1000
+	FailedStartPTY
+)

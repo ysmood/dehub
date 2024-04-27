@@ -1,13 +1,10 @@
 package dehub
 
 import (
-	"crypto/md5"
 	"encoding/json"
-	"fmt"
 	"net"
 
 	"github.com/ysmood/byframe"
-	"golang.org/x/crypto/ssh"
 )
 
 func startTunnel(conn net.Conn) {
@@ -41,20 +38,4 @@ func readMsg[T any](conn net.Conn) (*T, error) {
 	}
 
 	return &msg, nil
-}
-
-func publicKeyHash(pub ssh.PublicKey) ([md5.Size]byte, error) {
-	key, ok := pub.(ssh.CryptoPublicKey)
-	if !ok {
-		return [md5.Size]byte{}, fmt.Errorf("invalid public key type: %T", pub)
-	}
-
-	sshPubKey, err := ssh.NewPublicKey(key.CryptoPublicKey())
-	if err != nil {
-		return [md5.Size]byte{}, err
-	}
-
-	d := md5.Sum(sshPubKey.Marshal())
-
-	return d, nil
 }

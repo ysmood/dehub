@@ -1,7 +1,6 @@
 package dehub
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"time"
+	"os/signal"
+	"syscall"
 
 	"github.com/creack/pty"
 	"github.com/hashicorp/yamux"
@@ -17,25 +17,62 @@ import (
 	"golang.org/x/term"
 )
 
-func NewMaster(id ServantID, privateKey []byte) *Master {
+func (c Command) String() string {
+	return string(c)
+}
+
+func NewMaster(id ServantID, prvKey ssh.Signer, trustedPubKeys ...[]byte) *Master {
+	trusted := map[string]struct{}{}
+
+	for _, raw := range trustedPubKeys {
+		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
+		if err != nil {
+			panic(err)
+		}
+
+		trusted[ssh.FingerprintSHA256(key)] = struct{}{}
+	}
+
+	sshConf := &ssh.ClientConfig{
+		User: "user",
+		Auth: []ssh.AuthMethod{ssh.PublicKeys(prvKey)},
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			if _, ok := trusted[ssh.FingerprintSHA256(key)]; ok {
+				return nil
+			}
+
+			return fmt.Errorf("not trusted host pubkey %s, %v, %s", hostname, remote, ssh.FingerprintSHA256(key))
+		},
+	}
+
 	return &Master{
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		servantID: id,
-		prvKey:    privateKey,
+		sshConf:   sshConf,
 	}
 }
 
-func (m *Master) Exec(conn net.Conn, in io.Reader, out io.Writer, cmd string, args ...string) error {
+func (m *Master) Connect(conn net.Conn) error {
 	err := connectHub(conn, ClientTypeMaster, m.servantID)
 	if err != nil {
 		return fmt.Errorf("failed to connect to hub: %w", err)
 	}
 
-	header := &TunnelHeader{Command: CommandExec}
+	sshConn, _, _, err := ssh.NewClientConn(conn, "", m.sshConf)
+	if err != nil {
+		return fmt.Errorf("failed to create ssh client conn: %w", err)
+	}
 
+	m.sshConn = sshConn
+
+	return nil
+}
+
+func (m *Master) Exec(in io.Reader, out io.Writer, cmd string, args ...string) error {
 	size := &pty.Winsize{Rows: 24, Cols: 80} //nolint: gomnd
 
 	if stdin, ok := in.(*os.File); ok && term.IsTerminal(int(stdin.Fd())) {
+		var err error
 		size, err = pty.GetsizeFull(os.Stdin)
 		if err != nil {
 			return fmt.Errorf("failed to get terminal size: %w", err)
@@ -49,44 +86,69 @@ func (m *Master) Exec(conn net.Conn, in io.Reader, out io.Writer, cmd string, ar
 		defer func() { _ = term.Restore(int(stdin.Fd()), oldState) }()
 	}
 
-	header.ExecMeta = &ExecMeta{
+	meta, err := json.Marshal(ExecMeta{
 		Size: size,
 		Cmd:  cmd,
 		Args: args,
-	}
-
-	err = m.handshake(conn, header)
+	})
 	if err != nil {
-		return fmt.Errorf("failed to handshake: %w", err)
+		return fmt.Errorf("failed to marshal ExecMeta: %w", err)
 	}
 
-	go func() { _, _ = io.Copy(conn, in) }()
+	ch, _, err := m.sshConn.OpenChannel(CommandExec.String(), meta)
+	if err != nil {
+		return fmt.Errorf("failed to open exec channel: %w", err)
+	}
 
-	_, _ = io.Copy(out, conn)
+	defer func() { _ = ch.Close() }()
 
-	_ = conn.Close()
+	defer m.sendWindowSizeChangeEvent(ch)()
+
+	go func() { _, _ = io.Copy(ch, in) }()
+
+	_, _ = io.Copy(out, ch)
 
 	return nil
 }
 
-func (m *Master) ForwardSocks5(conn net.Conn, listenTo net.Listener) error {
-	err := connectHub(conn, ClientTypeMaster, m.servantID)
+func (m *Master) sendWindowSizeChangeEvent(ch ssh.Channel) func() {
+	change := make(chan os.Signal, 1)
+	signal.Notify(change, syscall.SIGWINCH)
+
+	go func() {
+		for range change {
+			size, err := pty.GetsizeFull(os.Stdin)
+			if err != nil {
+				m.Logger.Error("failed to get terminal size", "err", err.Error())
+				return
+			}
+
+			b, err := json.Marshal(size)
+			if err != nil {
+				m.Logger.Error("failed to marshal terminal size", "err", err.Error())
+				return
+			}
+
+			_, err = ch.SendRequest(ExecResizeRequest, false, b)
+			if err != nil {
+				m.Logger.Error("failed to send resize request", "err", err.Error())
+				return
+			}
+		}
+	}()
+
+	return func() { signal.Stop(change); close(change) }
+}
+
+func (m *Master) ForwardSocks5(listenTo net.Listener) error {
+	ch, _, err := m.sshConn.OpenChannel(CommandForwardSocks5.String(), nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to hub: %w", err)
+		return fmt.Errorf("failed to open socks5 channel: %w", err)
 	}
 
-	header := &TunnelHeader{
-		Command: CommandForwardSocks5,
-	}
-
-	err = m.handshake(conn, header)
+	tunnel, err := yamux.Client(ch, nil)
 	if err != nil {
-		return fmt.Errorf("failed to handshake: %w", err)
-	}
-
-	tunnel, err := yamux.Client(conn, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create yamux tunnel: %w", err)
+		return fmt.Errorf("failed to create socks5 yamux tunnel: %w", err)
 	}
 
 	for {
@@ -129,87 +191,32 @@ func (m *Master) ForwardSocks5(conn net.Conn, listenTo net.Listener) error {
 	}
 }
 
-func (m *Master) ServeNFS(conn net.Conn, remoteDir string, fsSrv net.Listener, cacheLimit int) error {
+func (m *Master) ServeNFS(remoteDir string, fsSrv net.Listener, cacheLimit int) error {
 	if cacheLimit <= 0 {
 		cacheLimit = 2048
 	}
 
-	err := connectHub(conn, ClientTypeMaster, m.servantID)
+	meta, err := json.Marshal(MountDirMeta{
+		Path:       remoteDir,
+		CacheLimit: cacheLimit,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to connect to hub: %w", err)
+		return fmt.Errorf("failed to marshal MountDirMeta: %w", err)
 	}
 
-	header := &TunnelHeader{
-		Command: CommandShareDir,
-		ShareDirMeta: &MountDirMeta{
-			Path:       remoteDir,
-			CacheLimit: cacheLimit,
-		},
+	ch, _, err := m.sshConn.OpenChannel(CommandShareDir.String(), meta)
+	if err != nil {
+		return fmt.Errorf("failed to open ShareDir channel: %w", err)
 	}
 
-	err = m.handshake(conn, header)
+	tunnel, err := yamux.Client(ch, nil)
 	if err != nil {
-		return fmt.Errorf("failed to handshake: %w", err)
-	}
-
-	tunnel, err := yamux.Client(conn, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create yamux session: %w", err)
+		return fmt.Errorf("failed to create nfs yamux session: %w", err)
 	}
 
 	m.serveNFS(tunnel, fsSrv)
 
 	<-tunnel.CloseChan()
-
-	return nil
-}
-
-func (m *Master) handshake(conn net.Conn, header *TunnelHeader) error {
-	err := header.sign(m.prvKey)
-	if err != nil {
-		return fmt.Errorf("failed to sign header: %w", err)
-	}
-
-	writeMsg(conn, header)
-
-	res, err := readMsg[string](conn)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if *res != "" {
-		return fmt.Errorf("failed to handshake: %s", *res)
-	}
-
-	return nil
-}
-
-func (h *TunnelHeader) sign(keyData []byte) error {
-	key, err := ssh.ParsePrivateKey(keyData)
-	if err != nil {
-		return fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	hash, err := publicKeyHash(key.PublicKey())
-	if err != nil {
-		return err
-	}
-
-	h.PubKeyHash = hash
-
-	t, err := json.Marshal(time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to marshal timestamp: %w", err)
-	}
-
-	h.Timestamp = t
-
-	sig, err := key.Sign(rand.Reader, t)
-	if err != nil {
-		return fmt.Errorf("failed to sign timestamp: %w", err)
-	}
-
-	h.Sign = sig
 
 	return nil
 }
