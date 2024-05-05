@@ -1,258 +1,109 @@
-package dehub
+package main
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"log/slog"
 	"net"
 	"os"
 	"os/signal"
-	"syscall"
 
-	"github.com/creack/pty"
-	"github.com/hashicorp/yamux"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
+	cli "github.com/jawher/mow.cli"
+	dehub "github.com/ysmood/dehub/lib"
+	"github.com/ysmood/dehub/lib/utils"
 )
 
-func (c Command) String() string {
-	return string(c)
+type masterConf struct {
+	id         string
+	hubAddr    string
+	prvKey     string
+	pubKeys    []string
+	jsonOutput bool
+
+	socks5 string
+
+	nfsAddr   string
+	remoteDir string
+	localDir  string
+
+	cmdName string
+	cmdArgs []string
 }
 
-func NewMaster(id ServantID, prvKey ssh.Signer, trustedPubKeys ...[]byte) *Master {
-	trusted := map[string]struct{}{}
+func setupMasterCLI(app *cli.Cli) {
+	app.Command("m master",
+		"A client that connects to the hub server to command the servant client.",
+		func(c *cli.Cmd) {
+			var conf masterConf
 
-	for _, raw := range trustedPubKeys {
-		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
-		if err != nil {
-			panic(err)
-		}
+			c.Spec = "-p -k... [OPTIONS] ID"
 
-		trusted[ssh.FingerprintSHA256(key)] = struct{}{}
-	}
+			c.StringArgPtr(&conf.id, "ID", "", "The id of the servant to command.")
+			c.StringOptPtr(&conf.hubAddr, "a addr", ":8813", "The address of the hub server.")
 
-	sshConf := &ssh.ClientConfig{
-		User: "user",
-		Auth: []ssh.AuthMethod{ssh.PublicKeys(prvKey)},
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			if _, ok := trusted[ssh.FingerprintSHA256(key)]; ok {
-				return nil
-			}
+			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
+			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil, "The public key file paths.")
 
-			return fmt.Errorf("not trusted host pubkey %s, %v, %s", hostname, remote, ssh.FingerprintSHA256(key))
-		},
-	}
+			c.BoolOptPtr(&conf.jsonOutput, "j json", false, "json output to stdout")
 
-	return &Master{
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		servantID: id,
-		sshConf:   sshConf,
-	}
+			c.StringOptPtr(&conf.socks5, "s socks5", "", "The address of the socks5 server.")
+
+			c.StringOptPtr(&conf.nfsAddr, "n nfs-addr", "", "The address of the nfs server.")
+			c.StringOptPtr(&conf.remoteDir, "r remote-dir", ".", "The remote directory to serve.")
+			c.StringOptPtr(&conf.localDir, "l local-dir", "", "The local directory to sync.")
+
+			c.StringOptPtr(&conf.cmdName, "c cmd", "", "The command to run.")
+			c.StringsOptPtr(&conf.cmdArgs, "g cmd-args", nil, "The arguments of the command.")
+
+			c.Action = func() { runMaster(conf) }
+		})
 }
 
-func (m *Master) Connect(conn net.Conn) error {
-	err := connectHub(conn, ClientTypeMaster, m.servantID)
-	if err != nil {
-		return fmt.Errorf("failed to connect to hub: %w", err)
+func runMaster(conf masterConf) {
+	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys)...)
+	master.Logger = output(conf.jsonOutput)
+
+	e(master.Connect(dial(conf.hubAddr)))
+
+	// Forward socks5
+	if conf.socks5 != "" {
+		l, err := net.Listen("tcp", conf.socks5)
+		e(err)
+
+		master.Logger.Info("socks5 server on", "addr", l.Addr().String())
+
+		go func() { e(master.ForwardSocks5(l)) }()
 	}
 
-	sshConn, _, _, err := ssh.NewClientConn(conn, "", m.sshConf)
-	if err != nil {
-		return fmt.Errorf("failed to create ssh client conn: %w", err)
-	}
+	// Forward dir
+	if conf.nfsAddr != "" {
+		fsSrv, err := net.Listen("tcp", conf.nfsAddr)
+		e(err)
 
-	m.sshConn = sshConn
+		go func() { e(master.ServeNFS(conf.remoteDir, fsSrv, 0)) }()
 
-	return nil
-}
+		master.Logger.Info("nfs server on", "addr", fsSrv.Addr().String())
 
-func (m *Master) Exec(in io.Reader, out io.Writer, cmd string, args ...string) error {
-	size := &pty.Winsize{Rows: 24, Cols: 80} //nolint: gomnd
-
-	if stdin, ok := in.(*os.File); ok && term.IsTerminal(int(stdin.Fd())) {
-		var err error
-		size, err = pty.GetsizeFull(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("failed to get terminal size: %w", err)
+		localDir := conf.localDir
+		if localDir == "" {
+			localDir, err = os.MkdirTemp("", "dehub-nfs")
+			e(err)
 		}
 
-		oldState, err := term.MakeRaw(int(stdin.Fd()))
-		if err != nil {
-			return fmt.Errorf("failed to make raw terminal: %w", err)
-		}
-
-		defer func() { _ = term.Restore(int(stdin.Fd()), oldState) }()
-	}
-
-	meta, err := json.Marshal(ExecMeta{
-		Size: size,
-		Cmd:  cmd,
-		Args: args,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal ExecMeta: %w", err)
-	}
-
-	ch, _, err := m.sshConn.OpenChannel(CommandExec.String(), meta)
-	if err != nil {
-		return fmt.Errorf("failed to open exec channel: %w", err)
-	}
-
-	defer func() { _ = ch.Close() }()
-
-	defer m.sendWindowSizeChangeEvent(ch)()
-
-	go func() { _, _ = io.Copy(ch, in) }()
-
-	_, _ = io.Copy(out, ch)
-
-	return nil
-}
-
-func (m *Master) sendWindowSizeChangeEvent(ch ssh.Channel) func() {
-	change := make(chan os.Signal, 1)
-	signal.Notify(change, syscall.SIGWINCH)
-
-	go func() {
-		for range change {
-			size, err := pty.GetsizeFull(os.Stdin)
-			if err != nil {
-				m.Logger.Error("failed to get terminal size", "err", err.Error())
-				return
-			}
-
-			b, err := json.Marshal(size)
-			if err != nil {
-				m.Logger.Error("failed to marshal terminal size", "err", err.Error())
-				return
-			}
-
-			_, err = ch.SendRequest(ExecResizeRequest, false, b)
-			if err != nil {
-				m.Logger.Error("failed to send resize request", "err", err.Error())
-				return
-			}
-		}
-	}()
-
-	return func() { signal.Stop(change); close(change) }
-}
-
-func (m *Master) ForwardSocks5(listenTo net.Listener) error {
-	ch, _, err := m.sshConn.OpenChannel(CommandForwardSocks5.String(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to open socks5 channel: %w", err)
-	}
-
-	tunnel, err := yamux.Client(ch, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create socks5 yamux tunnel: %w", err)
-	}
-
-	for {
-		src, err := listenTo.Accept()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-
-			return fmt.Errorf("failed to accept sock5 connection: %w", err)
-		}
-
-		m.Logger.Info("new socks5 connection")
-
-		go func() {
-			stream, err := tunnel.Open()
-			if err != nil {
-				if errors.Is(err, yamux.ErrSessionShutdown) {
-					return
-				}
-
-				m.Logger.Error("failed to open yamux tunnel", "err", err.Error())
-				return
-			}
-
-			go func() {
-				_, err := io.Copy(stream, src)
-				if err != nil {
-					m.Logger.Error(err.Error())
-				}
-				_ = stream.Close()
-			}()
-
-			_, err = io.Copy(src, stream)
-			if err != nil {
-				m.Logger.Error(err.Error())
-			}
-			_ = src.Close()
+		e(utils.MountNFS(fsSrv.Addr().(*net.TCPAddr), localDir))
+		defer func() {
+			e(utils.UnmountNFS(localDir))
+			master.Logger.Info("nfs unmounted", "dir", localDir)
 		}()
-	}
-}
-
-func (m *Master) ServeNFS(remoteDir string, fsSrv net.Listener, cacheLimit int) error {
-	if cacheLimit <= 0 {
-		cacheLimit = 2048
+		master.Logger.Info("nfs mounted", "dir", localDir)
 	}
 
-	meta, err := json.Marshal(MountDirMeta{
-		Path:       remoteDir,
-		CacheLimit: cacheLimit,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal MountDirMeta: %w", err)
+	// Run remote shell command
+	if conf.cmdName != "" {
+		master.Logger.Info("run command", "cmd", conf.cmdName, "args", conf.cmdArgs)
+
+		e(master.Exec(os.Stdin, os.Stdout, conf.cmdName, conf.cmdArgs...))
+	} else {
+		// Capture CTRL+C
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
 	}
-
-	ch, _, err := m.sshConn.OpenChannel(CommandShareDir.String(), meta)
-	if err != nil {
-		return fmt.Errorf("failed to open ShareDir channel: %w", err)
-	}
-
-	tunnel, err := yamux.Client(ch, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create nfs yamux session: %w", err)
-	}
-
-	m.serveNFS(tunnel, fsSrv)
-
-	<-tunnel.CloseChan()
-
-	return nil
-}
-
-func (m *Master) serveNFS(tunnel *yamux.Session, fServer net.Listener) {
-	go func() {
-		for {
-			fConn, err := fServer.Accept()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					return
-				}
-
-				m.Logger.Error("failed to accept nfs connection", slog.Any("err", err))
-				return
-			}
-
-			nfs, err := tunnel.Open()
-			if err != nil {
-				if errors.Is(err, yamux.ErrSessionShutdown) {
-					return
-				}
-
-				m.Logger.Error("failed to open nfs yamux stream", slog.Any("err", err))
-				return
-			}
-
-			go func() {
-				go func() {
-					_, _ = io.Copy(nfs, fConn)
-					_ = nfs.Close()
-				}()
-
-				_, _ = io.Copy(fConn, nfs)
-				_ = fConn.Close()
-			}()
-		}
-	}()
 }

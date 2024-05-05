@@ -8,7 +8,7 @@ import (
 
 	"github.com/willscott/go-nfs-client/nfs"
 	"github.com/willscott/go-nfs-client/nfs/rpc"
-	"github.com/ysmood/dehub"
+	dehub "github.com/ysmood/dehub/lib"
 	"github.com/ysmood/got"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/proxy"
@@ -121,10 +121,10 @@ func TestMountDir(t *testing.T) {
 	fsSrv, err := net.Listen("tcp", ":0")
 	g.E(err)
 
-	go func() { g.E(master.ServeNFS("lib/fixtures", fsSrv, 0)) }()
+	go func() { g.E(master.ServeNFS("fixtures", fsSrv, 0)) }()
 
 	g.Eq(
-		g.Read("lib/fixtures/id_ed25519.pub").String(),
+		g.Read("fixtures/id_ed25519.pub").String(),
 		nfsReadFile(g, fsSrv.Addr().(*net.TCPAddr), "id_ed25519.pub"),
 	)
 }
@@ -149,11 +149,11 @@ func nfsReadFile(g got.G, addr *net.TCPAddr, path string) string {
 }
 
 func prvKey(g got.G) ssh.Signer {
-	key, err := ssh.ParsePrivateKey(g.Read("lib/fixtures/id_ed25519").Bytes())
+	key, err := ssh.ParsePrivateKey(g.Read("fixtures/id_ed25519").Bytes())
 	g.E(err)
 	return key
 }
 
 func pubKey(g got.G) []byte {
-	return g.Read("lib/fixtures/id_ed25519.pub").Bytes()
+	return g.Read("fixtures/id_ed25519.pub").Bytes()
 }

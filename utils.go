@@ -1,41 +1,47 @@
-package dehub
+package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"net"
+	"os"
 
-	"github.com/ysmood/byframe"
+	cli "github.com/jawher/mow.cli"
+	"golang.org/x/crypto/ssh"
 )
 
-func startTunnel(conn net.Conn) {
-	writeMsg(conn, "")
+func privateKey(path string) ssh.Signer {
+	b := readFile(path)
+	s, err := ssh.ParsePrivateKey(b)
+	e(err)
+	return s
 }
 
-func writeMsg(conn net.Conn, msg any) {
-	b, err := json.Marshal(msg)
-	if err != nil {
-		return
+func publicKeys(paths []string) [][]byte {
+	list := [][]byte{}
+
+	for _, path := range paths {
+		list = append(list, readFile(path))
 	}
 
-	_, _ = conn.Write(byframe.Encode(b))
+	return list
 }
 
-func readMsg[T any](conn net.Conn) (*T, error) {
-	s := byframe.NewScanner(conn)
+func dial(addr string) net.Conn {
+	conn, err := net.Dial("tcp", addr)
+	e(err)
+	return conn
+}
 
-	s.Scan()
-
-	err := s.Err()
+func e(err error) {
 	if err != nil {
-		return nil, err
+		fmt.Println(err.Error()) //nolint: forbidigo
+
+		cli.Exit(2) //nolint: gomnd
 	}
+}
 
-	var msg T
-
-	err = json.Unmarshal(s.Frame(), &msg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &msg, nil
+func readFile(path string) []byte {
+	b, err := os.ReadFile(path)
+	e(err)
+	return b
 }

@@ -1,6 +1,6 @@
 # Overview
 
-A lightweight and secure debugging lib for remote process. It's not a CLI tool, it's a library for you to build your own tool.
+A lightweight and secure debugging lib for remote process.
 
 Features:
 
@@ -11,12 +11,17 @@ Features:
 
 ```mermaid
 flowchart LR
-    H[Hub Server]
-    M[Master client]
-    S[Servant client]
+    M[Master Client]
+    S[Servant Client]
 
-    M ---> H
-    S ---> H
+    subgraph Cluster
+        H1[Hub Server 01]
+        H2[Hub Server 02]
+    end
+
+    S ---> H2
+    M --> H1
+    H1 --> H2
 ```
 
 Because Master and Servant uses public key to communicate, the Hub server can be a untrusted server.
