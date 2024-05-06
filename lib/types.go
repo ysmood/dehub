@@ -3,7 +3,6 @@ package dehub
 import (
 	"crypto/md5"
 	"log/slog"
-	"time"
 
 	"github.com/creack/pty"
 	"github.com/hashicorp/yamux"
@@ -48,11 +47,10 @@ type Master struct {
 }
 
 type Servant struct {
-	Logger      *slog.Logger
-	SignTimeout time.Duration
-	pubKeys     PubKeys
-	id          ServantID
-	sshConf     *ssh.ServerConfig
+	Logger  *slog.Logger
+	pubKeys PubKeys
+	id      ServantID
+	sshConf *ssh.ServerConfig
 }
 
 type PubKeys map[string]PubKey

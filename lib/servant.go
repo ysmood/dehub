@@ -56,11 +56,10 @@ func NewServant(id ServantID, prvKey ssh.Signer, pubKeys ...[]byte) *Servant {
 	sshConf.AddHostKey(prvKey)
 
 	return &Servant{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		SignTimeout: DefaultSignTimeout,
-		id:          id,
-		pubKeys:     keys,
-		sshConf:     sshConf,
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		id:      id,
+		pubKeys: keys,
+		sshConf: sshConf,
 	}
 }
 
