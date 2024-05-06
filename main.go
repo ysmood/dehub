@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -8,8 +9,16 @@ import (
 	"github.com/lmittmann/tint"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	app := cli.App("dehub", "A lightweight and secure debugging lib for remote process.")
+
+	app.Version("v version", fmt.Sprintf("v%s, commit %s, built at %s", version, commit, date))
 
 	setupHubCLI(app)
 	setupServantCLI(app)
