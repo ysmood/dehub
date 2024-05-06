@@ -18,7 +18,7 @@ func NewHub() *Hub {
 	h := &Hub{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		list:   xsync.Map[ServantID, *yamux.Session]{},
-		db: &memDB{
+		DB: &memDB{
 			list: xsync.Map[ServantID, string]{},
 		},
 		addr: "",
@@ -83,7 +83,7 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 
 	h.list.Store(header.ID, tunnel)
 
-	err = h.db.StoreLocation(header.ID, h.addr)
+	err = h.DB.StoreLocation(header.ID, h.addr)
 	if err != nil {
 		return fmt.Errorf("failed to store location: %w", err)
 	}
@@ -104,7 +104,7 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 	defer func() { _ = conn.Close() }()
 
-	addr, err := h.db.LoadLocation(header.ID)
+	addr, err := h.DB.LoadLocation(header.ID)
 	if err != nil {
 		return fmt.Errorf("failed to load location: %w", err)
 	}

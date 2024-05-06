@@ -16,7 +16,7 @@ type ServantID string
 type Hub struct {
 	Logger *slog.Logger
 	list   xsync.Map[ServantID, *yamux.Session]
-	db     DB
+	DB     DB
 	addr   string // The net address of the hub node relay.
 
 	GetIP func() (string, error)
