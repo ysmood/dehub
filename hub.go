@@ -12,6 +12,7 @@ type hubConf struct {
 	jsonOutput  bool
 	localhostIP bool
 	addr        string
+	websocket   bool
 }
 
 func setupHubCLI(app *cli.Cli) {
@@ -22,6 +23,7 @@ func setupHubCLI(app *cli.Cli) {
 		c.BoolOptPtr(&conf.localhostIP, "local-ip", false,
 			"Use 127.0.0.1 as the ip address for the hub server. If false it will use the interface IP.")
 		c.BoolOptPtr(&conf.jsonOutput, "j json", true, "json output to stdout")
+		c.BoolOptPtr(&conf.websocket, "w ws", false, "Handle each tcp connection as websocket.")
 
 		c.Action = func() { runHub(conf) }
 	})
@@ -47,6 +49,16 @@ func runHub(conf hubConf) {
 		conn, err := hubSrv.Accept()
 		if err != nil {
 			return
+		}
+
+		if conf.websocket {
+			err := dehub.WebsocketUpgrade(conn)
+			if err != nil {
+				hub.Logger.Error("failed to upgrade to websocket", "err", err)
+				_ = conn.Close()
+
+				continue
+			}
 		}
 
 		go hub.Handle(conn)

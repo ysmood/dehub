@@ -1,9 +1,12 @@
 package dehub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 
+	"github.com/gobwas/ws"
 	"github.com/ysmood/byframe"
 )
 
@@ -38,4 +41,14 @@ func readMsg[T any](conn io.Reader) (*T, error) {
 	}
 
 	return &msg, nil
+}
+
+func WebsocketUpgrade(conn io.ReadWriter) error {
+	_, err := ws.Upgrade(conn)
+	return err
+}
+
+func WebsocketDial(ctx context.Context, addr string) (net.Conn, error) {
+	conn, _, _, err := ws.Dial(ctx, addr)
+	return conn, err
 }

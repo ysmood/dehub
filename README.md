@@ -8,6 +8,8 @@ Features:
 - Forward socks5 proxy on remote.
 - Mount a remote directory to local with NFS.
 - Uses the `golang.org/x/crypt/ssh` to establish secure connections.
+- Hub server can be an endpoint of a http server.
+- Servant can run behind a firewall.
 
 ```mermaid
 flowchart LR

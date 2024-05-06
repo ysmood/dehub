@@ -11,10 +11,13 @@ import (
 )
 
 type masterConf struct {
-	id         string
-	hubAddr    string
-	prvKey     string
-	pubKeys    []string
+	id        string
+	hubAddr   string
+	websocket bool
+
+	prvKey  string
+	pubKeys []string
+
 	jsonOutput bool
 
 	socks5 string
@@ -37,6 +40,8 @@ func setupMasterCLI(app *cli.Cli) {
 
 			c.StringArgPtr(&conf.id, "ID", "", "The id of the servant to command.")
 			c.StringOptPtr(&conf.hubAddr, "a addr", ":8813", "The address of the hub server.")
+			c.BoolOptPtr(&conf.websocket, "w ws", false,
+				"Use websocket to connect to hub. If set, the addr should be a websocket address.")
 
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
 			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil, "The public key file paths.")
@@ -60,7 +65,7 @@ func runMaster(conf masterConf) {
 	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys)...)
 	master.Logger = output(conf.jsonOutput)
 
-	e(master.Connect(dial(conf.hubAddr)))
+	e(master.Connect(dial(conf.websocket, conf.hubAddr)))
 
 	// Forward socks5
 	if conf.socks5 != "" {

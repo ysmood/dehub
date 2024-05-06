@@ -6,10 +6,13 @@ import (
 )
 
 type servantConf struct {
-	id         string
-	hubAddr    string
-	prvKey     string
-	pubKeys    []string
+	id        string
+	hubAddr   string
+	websocket bool
+
+	prvKey  string
+	pubKeys []string
+
 	jsonOutput bool
 }
 
@@ -23,6 +26,8 @@ func setupServantCLI(app *cli.Cli) {
 
 			c.StringOptPtr(&conf.hubAddr, "a addr", ":8813", "The address of the hub server.")
 			c.StringArgPtr(&conf.id, "ID", "", "The id of the servant. It should be unique.")
+			c.BoolOptPtr(&conf.websocket, "w ws", false,
+				"Use websocket to connect to hub. If set, the addr should be a websocket address.")
 
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
 			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil, "The public key file paths.")
@@ -37,5 +42,5 @@ func runServant(conf servantConf) {
 	servant := dehub.NewServant(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys)...)
 	servant.Logger = output(conf.jsonOutput)
 
-	servant.Handle(dial(conf.hubAddr))()
+	servant.Handle(dial(conf.websocket, conf.hubAddr))()
 }

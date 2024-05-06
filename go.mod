@@ -13,6 +13,8 @@ require (
 
 require (
 	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
+	github.com/gobwas/httphead v0.1.0 // indirect
+	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/google/uuid v1.5.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/rasky/go-xdr v0.0.0-20170124162913-1a41d1a06c93 // indirect
@@ -21,6 +23,7 @@ require (
 
 require (
 	github.com/go-git/go-billy/v5 v5.5.0
+	github.com/gobwas/ws v1.4.0
 	github.com/jawher/mow.cli v1.2.0
 	github.com/lmittmann/tint v1.0.4
 	github.com/things-go/go-socks5 v0.0.5
