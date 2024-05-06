@@ -36,9 +36,10 @@ func setupMasterCLI(app *cli.Cli) {
 		func(c *cli.Cmd) {
 			var conf masterConf
 
-			c.Spec = "-p -k... [OPTIONS] ID"
+			c.Spec = "-p -k... [OPTIONS] ID_PREFIX"
 
-			c.StringArgPtr(&conf.id, "ID", "", "The id of the servant to command.")
+			c.StringArgPtr(&conf.id, "ID_PREFIX", "", "The id prefix of the servant to command, "+
+				"it will connect to the first servant id that match the id prefix.")
 			c.StringOptPtr(&conf.hubAddr, "a addr", ":8813", "The address of the hub server.")
 			c.BoolOptPtr(&conf.websocket, "w ws", false,
 				"Use websocket to connect to hub. If set, the addr should be a websocket address.")

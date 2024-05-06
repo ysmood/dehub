@@ -1,6 +1,8 @@
 # Overview
 
 A lightweight and secure debugging lib for remote process.
+Especially useful for debugging a service that you can deploy code to but you don't have direct access to,
+such as as k8s pod, github workflow, etc.
 
 Features:
 
