@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/creack/pty"
 	"github.com/hashicorp/yamux"
@@ -121,35 +119,6 @@ func (m *Master) Exec(in io.Reader, out io.Writer, cmd string, args ...string) e
 	_, _ = io.Copy(out, ch)
 
 	return nil
-}
-
-func (m *Master) sendWindowSizeChangeEvent(ch ssh.Channel) func() {
-	change := make(chan os.Signal, 1)
-	signal.Notify(change, syscall.SIGWINCH)
-
-	go func() {
-		for range change {
-			size, err := pty.GetsizeFull(os.Stdin)
-			if err != nil {
-				m.Logger.Error("failed to get terminal size", "err", err.Error())
-				return
-			}
-
-			b, err := json.Marshal(size)
-			if err != nil {
-				m.Logger.Error("failed to marshal terminal size", "err", err.Error())
-				return
-			}
-
-			_, err = ch.SendRequest(ExecResizeRequest, false, b)
-			if err != nil {
-				m.Logger.Error("failed to send resize request", "err", err.Error())
-				return
-			}
-		}
-	}()
-
-	return func() { signal.Stop(change); close(change) }
 }
 
 func (m *Master) ForwardSocks5(listenTo net.Listener) error {
