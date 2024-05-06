@@ -33,6 +33,6 @@ require (
 	github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00
 	github.com/ysmood/byframe v1.1.3
 	github.com/ysmood/myip v1.0.3
-	github.com/ysmood/whisper v0.8.14
+	github.com/ysmood/whisper v0.9.0
 	golang.org/x/sys v0.19.0
 )
