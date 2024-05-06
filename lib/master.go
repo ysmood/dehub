@@ -52,13 +52,25 @@ func NewMaster(id ServantID, prvKey ssh.Signer, trustedPubKeys ...[]byte) *Maste
 	}
 }
 
-func (m *Master) Connect(conn net.Conn) error {
+func (m *Master) Connect(conn io.ReadWriteCloser) error {
 	err := connectHub(conn, ClientTypeMaster, m.servantID)
 	if err != nil {
 		return fmt.Errorf("failed to connect to hub: %w", err)
 	}
 
-	sshConn, _, _, err := ssh.NewClientConn(conn, "", m.sshConf)
+	// This extra tunnel wrapping is for better control of the connection.
+	// Such as timeout.
+	session, err := yamux.Client(conn, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create master yamux session: %w", err)
+	}
+
+	tunnel, err := session.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open master yamux tunnel: %w", err)
+	}
+
+	sshConn, _, _, err := ssh.NewClientConn(tunnel, "", m.sshConf)
 	if err != nil {
 		return fmt.Errorf("failed to create ssh client conn: %w", err)
 	}
@@ -146,6 +158,8 @@ func (m *Master) ForwardSocks5(listenTo net.Listener) error {
 		return fmt.Errorf("failed to open socks5 channel: %w", err)
 	}
 
+	defer func() { _ = ch.Close() }()
+
 	tunnel, err := yamux.Client(ch, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create socks5 yamux tunnel: %w", err)
@@ -208,6 +222,8 @@ func (m *Master) ServeNFS(remoteDir string, fsSrv net.Listener, cacheLimit int) 
 	if err != nil {
 		return fmt.Errorf("failed to open ShareDir channel: %w", err)
 	}
+
+	defer func() { _ = ch.Close() }()
 
 	tunnel, err := yamux.Client(ch, nil)
 	if err != nil {

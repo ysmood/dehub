@@ -32,7 +32,7 @@ func NewHub() *Hub {
 	return h
 }
 
-func connectHub(conn net.Conn, typ ClientType, name ServantID) error {
+func connectHub(conn io.ReadWriter, typ ClientType, name ServantID) error {
 	writeMsg(conn, &HubHeader{
 		Type: typ,
 		ID:   name,
@@ -50,7 +50,7 @@ func connectHub(conn net.Conn, typ ClientType, name ServantID) error {
 	return nil
 }
 
-func (h *Hub) Handle(conn net.Conn) {
+func (h *Hub) Handle(conn io.ReadWriteCloser) {
 	header, err := readMsg[HubHeader](conn)
 	if err != nil {
 		h.Logger.Error("Failed to read header", slog.Any("err", err))
@@ -75,7 +75,7 @@ func (h *Hub) Handle(conn net.Conn) {
 	}
 }
 
-func (h *Hub) handleServant(conn net.Conn, header *HubHeader) error {
+func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 	tunnel, err := yamux.Client(conn, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create yamux session: %w", err)
@@ -101,7 +101,7 @@ func (h *Hub) handleServant(conn net.Conn, header *HubHeader) error {
 	return nil
 }
 
-func (h *Hub) handleMaster(conn net.Conn, header *HubHeader) error {
+func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 	defer func() { _ = conn.Close() }()
 
 	addr, err := h.db.LoadLocation(header.ID)

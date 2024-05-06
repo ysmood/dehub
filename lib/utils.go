@@ -2,16 +2,16 @@ package dehub
 
 import (
 	"encoding/json"
-	"net"
+	"io"
 
 	"github.com/ysmood/byframe"
 )
 
-func startTunnel(conn net.Conn) {
+func startTunnel(conn io.Writer) {
 	writeMsg(conn, "")
 }
 
-func writeMsg(conn net.Conn, msg any) {
+func writeMsg(conn io.Writer, msg any) {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return
@@ -20,7 +20,7 @@ func writeMsg(conn net.Conn, msg any) {
 	_, _ = conn.Write(byframe.Encode(b))
 }
 
-func readMsg[T any](conn net.Conn) (*T, error) {
+func readMsg[T any](conn io.Reader) (*T, error) {
 	s := byframe.NewScanner(conn)
 
 	s.Scan()

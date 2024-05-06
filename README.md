@@ -21,7 +21,7 @@ flowchart LR
 
     S ---> H2
     M --> H1
-    H1 --> H2
+    H1 -- relay --> H2
 ```
 
 Because Master and Servant uses public key to communicate, the Hub server can be a untrusted server.

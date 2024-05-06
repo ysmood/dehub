@@ -64,7 +64,7 @@ func NewServant(id ServantID, prvKey ssh.Signer, pubKeys ...[]byte) *Servant {
 	}
 }
 
-func (s *Servant) Handle(conn net.Conn) func() {
+func (s *Servant) Handle(conn io.ReadWriteCloser) func() {
 	err := connectHub(conn, ClientTypeServant, s.id)
 	if err != nil {
 		s.Logger.Error("Failed to connect to hub", slog.Any("err", err))
@@ -99,7 +99,19 @@ func (s *Servant) Handle(conn net.Conn) func() {
 func (s *Servant) serve(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
-	sshConn, channels, _, err := ssh.NewServerConn(conn, s.sshConf)
+	session, err := yamux.Server(conn, nil)
+	if err != nil {
+		s.Logger.Error("Failed to create yamux session", slog.Any("err", err))
+		return
+	}
+
+	tunnel, err := session.Accept()
+	if err != nil {
+		s.Logger.Error("Failed to accept tunnel", slog.Any("err", err))
+		return
+	}
+
+	sshConn, channels, _, err := ssh.NewServerConn(tunnel, s.sshConf)
 	if err != nil {
 		s.Logger.Error("Failed to handshake", "err", err)
 		return
