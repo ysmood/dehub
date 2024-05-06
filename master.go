@@ -68,6 +68,8 @@ func runMaster(conf masterConf) {
 
 	e(master.Connect(dial(conf.websocket, conf.hubAddr)))
 
+	wait := false
+
 	// Forward socks5
 	if conf.socks5 != "" {
 		l, err := net.Listen("tcp", conf.socks5)
@@ -76,6 +78,8 @@ func runMaster(conf masterConf) {
 		master.Logger.Info("socks5 server on", "addr", l.Addr().String())
 
 		go func() { e(master.ForwardSocks5(l)) }()
+
+		wait = true
 	}
 
 	// Forward dir
@@ -99,6 +103,8 @@ func runMaster(conf masterConf) {
 			master.Logger.Info("nfs unmounted", "dir", localDir)
 		}()
 		master.Logger.Info("nfs mounted", "dir", localDir)
+
+		wait = true
 	}
 
 	// Run remote shell command
@@ -106,7 +112,7 @@ func runMaster(conf masterConf) {
 		master.Logger.Info("run command", "cmd", conf.cmdName, "args", conf.cmdArgs)
 
 		e(master.Exec(os.Stdin, os.Stdout, conf.cmdName, conf.cmdArgs...))
-	} else {
+	} else if wait {
 		// Capture CTRL+C
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
