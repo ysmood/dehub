@@ -2,7 +2,9 @@ package dehub
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 
@@ -70,4 +72,8 @@ func CheckPublicKeys(trustedPubKeys ...[]byte) func(ssh.PublicKey) bool {
 		_, ok := trusted[ssh.FingerprintSHA256(key)]
 		return ok
 	}
+}
+
+func FormatPubKey(key ssh.PublicKey) string {
+	return fmt.Sprintf("%s %s", key.Type(), base64.StdEncoding.EncodeToString(key.Marshal()))
 }

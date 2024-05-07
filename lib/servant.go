@@ -35,8 +35,7 @@ func NewServant(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool)
 	s.sshConf = &ssh.ServerConfig{
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if check(key) {
-				s.Logger.Info("authorized master public key",
-					slog.String("user", conn.User()), slog.String("fingerPrint", ssh.FingerprintSHA256(key)))
+				s.Logger.Info("authorized master public key", slog.String("master-pubkey", FormatPubKey(key)))
 
 				return nil, nil //nolint: nilnil
 			}

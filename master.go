@@ -68,7 +68,7 @@ func runMaster(conf masterConf) { //nolint: funlen
 
 	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), func(pk ssh.PublicKey) bool {
 		if len(conf.pubKeys) == 0 {
-			if readLine("Do you trust the servant public key: "+ssh.FingerprintSHA256(pk)+"\n"+
+			if readLine("Do you trust the servant public key:\n"+dehub.FormatPubKey(pk)+"\n"+
 				"Input 'yes' then enter to trust: ") == "yes" {
 				return true
 			}
