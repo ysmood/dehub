@@ -14,12 +14,14 @@ linters:
     - ireturn
     - forcetypeassert
     - varnamelen
-    - goerr113
+    - err113
     - nlreturn
     - wsl
     - exhaustruct
 
     # Deprecated ones:
+    - execinquery
+    - gomnd
     - structcheck
     - interfacer
     - deadcode

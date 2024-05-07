@@ -9,7 +9,7 @@ import (
 )
 
 func MountNFS(addr *net.TCPAddr, localDir string) error {
-	err := os.MkdirAll(localDir, 0o755) //nolint: mnd,gomnd
+	err := os.MkdirAll(localDir, 0o755) //nolint: mnd
 	if err != nil {
 		return fmt.Errorf("failed to create mount directory: %w", err)
 	}

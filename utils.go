@@ -27,9 +27,9 @@ func output(jsonOutput bool) *slog.Logger {
 }
 
 func outputToFile(path string) *slog.Logger {
-	_ = os.MkdirAll(filepath.Dir(path), 0o755) //nolint: mnd,gomnd
+	_ = os.MkdirAll(filepath.Dir(path), 0o755) //nolint: mnd
 
-	f, _ := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644) //nolint: mnd,gomnd
+	f, _ := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644) //nolint: mnd
 
 	return slog.New(slog.NewTextHandler(f, nil))
 }
@@ -114,7 +114,7 @@ func e(err error) {
 	if err != nil {
 		fmt.Println(err.Error()) //nolint: forbidigo
 
-		cli.Exit(2) //nolint: mnd,gomnd
+		cli.Exit(2) //nolint: mnd
 	}
 }
 

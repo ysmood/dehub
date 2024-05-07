@@ -79,7 +79,7 @@ func (m *Master) Connect(conn io.ReadWriteCloser) error {
 }
 
 func (m *Master) Exec(in io.Reader, out io.Writer, cmd string, args ...string) error {
-	size := &pty.Winsize{Rows: 24, Cols: 80} //nolint: mnd,gomnd
+	size := &pty.Winsize{Rows: 24, Cols: 80} //nolint: mnd
 
 	if stdin, ok := in.(*os.File); ok && term.IsTerminal(int(stdin.Fd())) {
 		var err error
