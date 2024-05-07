@@ -4,17 +4,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	cli "github.com/jawher/mow.cli"
+	"github.com/lmittmann/tint"
 	dehub "github.com/ysmood/dehub/lib"
 	"github.com/ysmood/whisper/lib/secure"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
+
+func output(jsonOutput bool) *slog.Logger {
+	if jsonOutput {
+		return slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	}
+	return slog.New(tint.NewHandler(os.Stdout, nil))
+}
+
+func outputToFile(path string) *slog.Logger {
+	_ = os.MkdirAll(filepath.Dir(path), 0o755) //nolint: mnd,gomnd
+
+	f, _ := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644) //nolint: mnd,gomnd
+
+	return slog.New(slog.NewTextHandler(f, nil))
+}
 
 const dialTimeout = time.Second * 10
 
@@ -96,7 +114,7 @@ func e(err error) {
 	if err != nil {
 		fmt.Println(err.Error()) //nolint: forbidigo
 
-		cli.Exit(2) //nolint: gomnd
+		cli.Exit(2) //nolint: mnd,gomnd
 	}
 }
 

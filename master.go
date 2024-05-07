@@ -18,7 +18,7 @@ type masterConf struct {
 	prvKey  string
 	pubKeys []string
 
-	jsonOutput bool
+	outputFile string
 
 	socks5 string
 
@@ -47,7 +47,7 @@ func setupMasterCLI(app *cli.Cli) {
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
 			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil, "The public key file paths.")
 
-			c.BoolOptPtr(&conf.jsonOutput, "j json", false, "json output to stdout")
+			c.StringOptPtr(&conf.outputFile, "o output", "tmp/dehub-master.log", "The file path to append the output.")
 
 			c.StringOptPtr(&conf.socks5, "s socks5", "", "The address of the socks5 server.")
 
@@ -64,7 +64,7 @@ func setupMasterCLI(app *cli.Cli) {
 
 func runMaster(conf masterConf) {
 	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys)...)
-	master.Logger = output(conf.jsonOutput)
+	master.Logger = output(false)
 
 	e(master.Connect(dial(conf.websocket, conf.hubAddr)))
 
@@ -110,6 +110,9 @@ func runMaster(conf masterConf) {
 	// Run remote shell command
 	if conf.cmdName != "" {
 		master.Logger.Info("run command", "cmd", conf.cmdName, "args", conf.cmdArgs)
+		master.Logger.Info("output log to", "file", conf.outputFile)
+
+		master.Logger = outputToFile(conf.outputFile)
 
 		e(master.Exec(os.Stdin, os.Stdout, conf.cmdName, conf.cmdArgs...))
 	} else if wait {

@@ -6,7 +6,6 @@ import (
 	"os"
 
 	cli "github.com/jawher/mow.cli"
-	"github.com/lmittmann/tint"
 )
 
 var (
@@ -29,11 +28,4 @@ func main() {
 		slog.Error(err.Error())
 		cli.Exit(1)
 	}
-}
-
-func output(jsonOutput bool) *slog.Logger {
-	if jsonOutput {
-		return slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	}
-	return slog.New(tint.NewHandler(os.Stdout, nil))
 }
