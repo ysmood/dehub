@@ -42,5 +42,5 @@ func runServant(conf servantConf) {
 	servant := dehub.NewServant(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys)...)
 	servant.Logger = output(conf.jsonOutput)
 
-	servant.Handle(dial(conf.websocket, conf.hubAddr))()
+	servant.Serve(dial(conf.websocket, conf.hubAddr))()
 }

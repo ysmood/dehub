@@ -16,5 +16,8 @@ jobs:
       - name: lint
         run: go run github.com/ysmood/golangci-lint@latest
 
+      - name: Start MongoDB
+        uses: supercharge/mongodb-github-action@1.10.0
+
       - name: test
         run: go test ./...

@@ -63,7 +63,7 @@ func NewServant(id ServantID, prvKey ssh.Signer, pubKeys ...[]byte) *Servant {
 	}
 }
 
-func (s *Servant) Handle(conn io.ReadWriteCloser) func() {
+func (s *Servant) Serve(conn io.ReadWriteCloser) func() {
 	err := connectHub(conn, ClientTypeServant, s.id)
 	if err != nil {
 		s.Logger.Error("Failed to connect to hub", slog.Any("err", err))

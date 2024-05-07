@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/yamux"
+	"github.com/ysmood/dehub/lib/hubdb"
 	"github.com/ysmood/dehub/lib/xsync"
 	"github.com/ysmood/myip"
 )
@@ -18,16 +19,14 @@ func NewHub() *Hub {
 	h := &Hub{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		list:   xsync.Map[ServantID, *yamux.Session]{},
-		DB: &memDB{
-			list: xsync.Map[ServantID, string]{},
-		},
-		addr: "",
+		DB:     hubdb.NewMemory(),
+		addr:   "",
 		GetIP: func() (string, error) {
 			return myip.New().GetInterfaceIP()
 		},
 	}
 
-	h.startRelay()
+	go h.startRelay()()
 
 	return h
 }
@@ -83,7 +82,7 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 
 	h.list.Store(header.ID, tunnel)
 
-	err = h.DB.StoreLocation(header.ID, h.addr)
+	err = h.DB.StoreLocation(header.ID.String(), h.addr)
 	if err != nil {
 		return fmt.Errorf("failed to store location: %w", err)
 	}
@@ -104,7 +103,7 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 	defer func() { _ = conn.Close() }()
 
-	addr, err := h.DB.LoadLocation(header.ID)
+	addr, err := h.DB.LoadLocation(header.ID.String())
 	if err != nil {
 		return fmt.Errorf("failed to load location: %w", err)
 	}
@@ -141,7 +140,7 @@ func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 	return nil
 }
 
-func (h *Hub) startRelay() {
+func (h *Hub) startRelay() func() {
 	relay, err := net.Listen("tcp", ":0")
 	if err != nil {
 		panic(err)
@@ -154,7 +153,7 @@ func (h *Hub) startRelay() {
 
 	h.addr = net.JoinHostPort(addr, strconv.Itoa(relay.Addr().(*net.TCPAddr).Port))
 
-	go func() {
+	return func() {
 		for {
 			conn, err := relay.Accept()
 			if err != nil {
@@ -180,7 +179,7 @@ func (h *Hub) startRelay() {
 				h.Logger.Info("relay disconnected")
 			}()
 		}
-	}()
+	}
 }
 
 func (h *Hub) handleRelay(conn net.Conn) error {
@@ -228,23 +227,4 @@ func (h *Hub) handleRelay(conn net.Conn) error {
 	_, _ = io.Copy(conn, tunnel)
 
 	return nil
-}
-
-type memDB struct {
-	list xsync.Map[ServantID, string]
-}
-
-func (db *memDB) StoreLocation(name ServantID, addr string) error {
-	db.list.Store(name, addr)
-
-	return nil
-}
-
-func (db *memDB) LoadLocation(name ServantID) (string, error) {
-	addr, ok := db.list.Load(name)
-	if !ok {
-		return "", fmt.Errorf("servant not found: %s", name.String())
-	}
-
-	return addr, nil
 }

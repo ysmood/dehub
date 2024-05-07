@@ -10,6 +10,10 @@ func (m *Map[K, V]) Delete(key K) { m.m.Delete(key) }
 
 func (m *Map[K, V]) Load(key K) (V, bool) {
 	v, ok := m.m.Load(key)
+	if !ok {
+		var v V
+		return v, false
+	}
 
 	return v.(V), ok
 }

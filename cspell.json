@@ -1,5 +1,6 @@
 {
   "words": [
+    "bson",
     "copyloopvar",
     "creack",
     "dehub",
@@ -8,8 +9,10 @@
     "funlen",
     "Getsize",
     "gobwas",
+    "golangci",
     "gomnd",
     "goreleaser",
+    "hubdb",
     "lmittmann",
     "loopclosure",
     "mountport",
@@ -20,6 +23,7 @@
     "osfsx",
     "pubkey",
     "Setsize",
+    "Upsert",
     "willscott",
     "Winsize",
     "xsync",
