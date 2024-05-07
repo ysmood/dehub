@@ -22,35 +22,16 @@ import (
 func TestExec(t *testing.T) {
 	g := got.T(t)
 
-	hub := dehub.NewHub()
-	hub.GetIP = getIP
+	hubAddr := startHub(g, nil)
 
+	servantConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
 	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
-
-	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
-
-	hubSrv, err := net.Listen("tcp", ":0")
-	g.E(err)
-
-	go func() {
-		for {
-			conn, err := hubSrv.Accept()
-			if err != nil {
-				return
-			}
-
-			go hub.Handle(conn)
-		}
-	}()
-
-	servantConn, err := net.Dial("tcp", hubSrv.Addr().String())
-	g.E(err)
-
 	go servant.Serve(servantConn)()
 
-	masterConn, err := net.Dial("tcp", hubSrv.Addr().String())
+	masterConn, err := net.Dial("tcp", hubAddr)
 	g.E(err)
-
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
 	g.E(master.Connect(masterConn))
 
 	txt := g.RandStr(1024)
@@ -64,35 +45,16 @@ func TestExec(t *testing.T) {
 func TestSocks5(t *testing.T) {
 	g := got.T(t)
 
-	hub := dehub.NewHub()
-	hub.GetIP = getIP
+	hubAddr := startHub(g, nil)
 
+	servantConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
 	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
-
-	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
-
-	hubSrv, err := net.Listen("tcp", ":0")
-	g.E(err)
-
-	go func() {
-		for {
-			conn, err := hubSrv.Accept()
-			if err != nil {
-				return
-			}
-
-			go hub.Handle(conn)
-		}
-	}()
-
-	servantConn, err := net.Dial("tcp", hubSrv.Addr().String())
-	g.E(err)
-
 	go servant.Serve(servantConn)()
 
-	masterConn, err := net.Dial("tcp", hubSrv.Addr().String())
+	masterConn, err := net.Dial("tcp", hubAddr)
 	g.E(err)
-
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
 	g.E(master.Connect(masterConn))
 
 	proxyServer, err := net.Listen("tcp", ":0")
@@ -123,35 +85,16 @@ func reqViaProxy(g got.G, proxyHost string, u string) string {
 func TestMountDir(t *testing.T) {
 	g := got.T(t)
 
-	hub := dehub.NewHub()
-	hub.GetIP = getIP
+	hubAddr := startHub(g, nil)
 
+	servantConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
 	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
-
-	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
-
-	hubSrv, err := net.Listen("tcp", ":0")
-	g.E(err)
-
-	go func() {
-		for {
-			conn, err := hubSrv.Accept()
-			if err != nil {
-				return
-			}
-
-			go hub.Handle(conn)
-		}
-	}()
-
-	servantConn, err := net.Dial("tcp", hubSrv.Addr().String())
-	g.E(err)
-
 	go servant.Serve(servantConn)()
 
-	masterConn, err := net.Dial("tcp", hubSrv.Addr().String())
+	masterConn, err := net.Dial("tcp", hubAddr)
 	g.E(err)
-
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
 	g.E(master.Connect(masterConn))
 
 	fsSrv, err := net.Listen("tcp", ":0")
@@ -176,52 +119,40 @@ func TestCluster(t *testing.T) {
 
 	db := hubdb.NewMongo(client.Database("test"), "test")
 
-	startHub := func() string {
-		hubSrv, err := net.Listen("tcp", ":0")
+	hub01Addr := startHub(g, db)
+	hub02Addr := startHub(g, db)
+
+	startServant := func(name dehub.ServantID, hubAddr string) {
+		servantConn, err := net.Dial("tcp", hubAddr)
 		g.E(err)
 
-		hub := dehub.NewHub()
-		hub.GetIP = getIP
-		hub.DB = db
+		servant := dehub.NewServant(name, prvKey(g), pubKey(g))
 
-		go func() {
-			for {
-				conn, err := hubSrv.Accept()
-				if err != nil {
-					return
-				}
-
-				go hub.Handle(conn)
-			}
-		}()
-
-		return hubSrv.Addr().String()
+		go servant.Serve(servantConn)()
 	}
 
-	hub01Addr := startHub()
-	hub02Addr := startHub()
-
-	servantConn, err := net.Dial("tcp", hub01Addr)
-	g.E(err)
-
-	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
-
-	go servant.Serve(servantConn)()
+	startServant("test01", hub01Addr)
+	startServant("test02", hub02Addr)
 
 	time.Sleep(time.Second)
 
-	masterConn, err := net.Dial("tcp", hub02Addr)
-	g.E(err)
+	testMaster := func(hubAddr string) {
+		masterConn, err := net.Dial("tcp", hubAddr)
+		g.E(err)
 
-	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
-	g.E(master.Connect(masterConn))
+		master := dehub.NewMaster("test01", prvKey(g), pubKey(g))
+		g.E(master.Connect(masterConn))
 
-	txt := g.RandStr(1024)
+		txt := g.RandStr(1024)
 
-	out := bytes.NewBuffer(nil)
-	err = master.Exec(bytes.NewBuffer(nil), out, "echo", txt)
-	g.E(err)
-	g.Has(out.String(), txt)
+		out := bytes.NewBuffer(nil)
+		err = master.Exec(bytes.NewBuffer(nil), out, "echo", txt)
+		g.E(err)
+		g.Has(out.String(), txt)
+	}
+
+	testMaster(hub01Addr)
+	testMaster(hub02Addr)
 }
 
 func nfsReadFile(g got.G, addr *net.TCPAddr, path string) string {
@@ -255,4 +186,30 @@ func pubKey(g got.G) []byte {
 
 func getIP() (string, error) {
 	return "127.0.0.1", nil
+}
+
+func startHub(g got.G, db dehub.DB) string {
+	hubSrv, err := net.Listen("tcp", ":0")
+	g.E(err)
+
+	if db == nil {
+		db = hubdb.NewMemory()
+	}
+
+	hub := dehub.NewHub()
+	hub.GetIP = getIP
+	hub.DB = db
+
+	go func() {
+		for {
+			conn, err := hubSrv.Accept()
+			if err != nil {
+				return
+			}
+
+			go hub.Handle(conn)
+		}
+	}()
+
+	return hubSrv.Addr().String()
 }
