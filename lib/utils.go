@@ -8,6 +8,7 @@ import (
 
 	"github.com/gobwas/ws"
 	"github.com/ysmood/byframe"
+	"golang.org/x/crypto/ssh"
 )
 
 func startTunnel(conn io.Writer) {
@@ -51,4 +52,22 @@ func WebsocketUpgrade(conn io.ReadWriter) error {
 func WebsocketDial(ctx context.Context, addr string) (net.Conn, error) {
 	conn, _, _, err := ws.Dial(ctx, addr)
 	return conn, err
+}
+
+func CheckPublicKeys(trustedPubKeys ...[]byte) func(ssh.PublicKey) bool {
+	trusted := map[string]struct{}{}
+
+	for _, raw := range trustedPubKeys {
+		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
+		if err != nil {
+			panic(err)
+		}
+
+		trusted[ssh.FingerprintSHA256(key)] = struct{}{}
+	}
+
+	return func(key ssh.PublicKey) bool {
+		_, ok := trusted[ssh.FingerprintSHA256(key)]
+		return ok
+	}
 }

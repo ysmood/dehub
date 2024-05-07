@@ -48,16 +48,8 @@ type Master struct {
 
 type Servant struct {
 	Logger  *slog.Logger
-	pubKeys PubKeys
 	id      ServantID
 	sshConf *ssh.ServerConfig
-}
-
-type PubKeys map[string]PubKey
-
-type PubKey struct {
-	raw       string
-	sshPubKey ssh.PublicKey
 }
 
 type TunnelHeader struct {

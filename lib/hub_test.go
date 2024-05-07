@@ -180,8 +180,8 @@ func prvKey(g got.G) ssh.Signer {
 	return key
 }
 
-func pubKey(g got.G) []byte {
-	return g.Read("fixtures/id_ed25519.pub").Bytes()
+func pubKey(g got.G) func(ssh.PublicKey) bool {
+	return dehub.CheckPublicKeys(g.Read("fixtures/id_ed25519.pub").Bytes())
 }
 
 func getIP() (string, error) {

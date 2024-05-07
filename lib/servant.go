@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/creack/pty"
@@ -23,44 +22,32 @@ import (
 
 const DefaultSignTimeout = 10 * time.Second
 
-const PubKeyRawKey = "pubkey-raw"
-
 func (n ServantID) String() string {
 	return string(n)
 }
 
-func NewServant(id ServantID, prvKey ssh.Signer, pubKeys ...[]byte) *Servant {
-	keys := PubKeys{}
-	for _, raw := range pubKeys {
-		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
-		if err != nil {
-			panic(err)
-		}
-
-		keys[ssh.FingerprintSHA256(key)] = PubKey{raw: strings.TrimSpace(string(raw)), sshPubKey: key}
+func NewServant(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool) *Servant {
+	s := &Servant{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		id:     id,
 	}
 
-	sshConf := &ssh.ServerConfig{
+	s.sshConf = &ssh.ServerConfig{
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			fp := ssh.FingerprintSHA256(key)
-			if _, ok := keys[fp]; ok {
-				return &ssh.Permissions{
-					Extensions: map[string]string{PubKeyRawKey: keys[fp].raw},
-				}, nil
+			if check(key) {
+				s.Logger.Info("authorized master public key",
+					slog.String("user", conn.User()), slog.String("fingerPrint", ssh.FingerprintSHA256(key)))
+
+				return nil, nil //nolint: nilnil
 			}
 
-			return nil, errors.New("public key not found")
+			return nil, errors.New("not a authorized master public key")
 		},
 	}
 
-	sshConf.AddHostKey(prvKey)
+	s.sshConf.AddHostKey(prvKey)
 
-	return &Servant{
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		id:      id,
-		pubKeys: keys,
-		sshConf: sshConf,
-	}
+	return s
 }
 
 func (s *Servant) Serve(conn io.ReadWriteCloser) func() {
@@ -110,13 +97,11 @@ func (s *Servant) serve(conn net.Conn) {
 		return
 	}
 
-	sshConn, channels, _, err := ssh.NewServerConn(tunnel, s.sshConf)
+	_, channels, _, err := ssh.NewServerConn(tunnel, s.sshConf)
 	if err != nil {
 		s.Logger.Error("Failed to handshake", "err", err)
 		return
 	}
-
-	s.Logger.Info("authorized", "pubkey-fingerprint", sshConn.Permissions.Extensions[PubKeyRawKey])
 
 	for newChan := range channels {
 		switch Command(newChan.ChannelType()) {

@@ -19,23 +19,12 @@ func (c Command) String() string {
 	return string(c)
 }
 
-func NewMaster(id ServantID, prvKey ssh.Signer, trustedPubKeys ...[]byte) *Master {
-	trusted := map[string]struct{}{}
-
-	for _, raw := range trustedPubKeys {
-		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
-		if err != nil {
-			panic(err)
-		}
-
-		trusted[ssh.FingerprintSHA256(key)] = struct{}{}
-	}
-
+func NewMaster(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool) *Master {
 	sshConf := &ssh.ClientConfig{
 		User: "user",
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(prvKey)},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			if _, ok := trusted[ssh.FingerprintSHA256(key)]; ok {
+			if check(key) {
 				return nil
 			}
 

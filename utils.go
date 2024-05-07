@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -81,14 +82,27 @@ func readPassphrase(prompt string) string {
 	return string(inputPass)
 }
 
-func publicKeys(paths []string) [][]byte {
+func readLine(prompt string) string {
+	fmt.Fprint(os.Stderr, prompt)
+
+	reader := bufio.NewReader(os.Stdin)
+
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		e(err)
+	}
+
+	return strings.TrimSpace(line)
+}
+
+func publicKeys(paths []string) func(ssh.PublicKey) bool {
 	list := [][]byte{}
 
 	for _, path := range paths {
 		list = append(list, readFile(path))
 	}
 
-	return list
+	return dehub.CheckPublicKeys(list...)
 }
 
 func dial(websocket bool, addr string) net.Conn {

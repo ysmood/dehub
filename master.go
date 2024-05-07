@@ -8,6 +8,7 @@ import (
 	cli "github.com/jawher/mow.cli"
 	dehub "github.com/ysmood/dehub/lib"
 	"github.com/ysmood/dehub/lib/utils"
+	"golang.org/x/crypto/ssh"
 )
 
 type masterConf struct {
@@ -36,7 +37,7 @@ func setupMasterCLI(app *cli.Cli) {
 		func(c *cli.Cmd) {
 			var conf masterConf
 
-			c.Spec = "-p -k... [OPTIONS] ID_PREFIX"
+			c.Spec = "-p [OPTIONS] ID_PREFIX"
 
 			c.StringArgPtr(&conf.id, "ID_PREFIX", "", "The id prefix of the servant to command, "+
 				"it will connect to the first servant id that match the id prefix.")
@@ -62,8 +63,19 @@ func setupMasterCLI(app *cli.Cli) {
 		})
 }
 
-func runMaster(conf masterConf) {
-	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys)...)
+func runMaster(conf masterConf) { //nolint: funlen
+	checkKey := publicKeys(conf.pubKeys)
+
+	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), func(pk ssh.PublicKey) bool {
+		if len(conf.pubKeys) == 0 {
+			if readLine("Do you trust the servant public key: "+ssh.FingerprintSHA256(pk)+"\n"+
+				"Input 'yes' then enter to trust: ") == "yes" {
+				return true
+			}
+		}
+
+		return checkKey(pk)
+	})
 	master.Logger = output(false)
 
 	e(master.Connect(dial(conf.websocket, conf.hubAddr)))
