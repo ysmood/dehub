@@ -62,7 +62,7 @@ func (s *Servant) Serve(conn io.ReadWriteCloser) func() {
 		return func() {}
 	}
 
-	s.Logger.Info("servant connected to hub", slog.String("servant", s.id.String()))
+	s.Logger.Info("servant connected to hub", slog.String("servantId", s.id.String()))
 
 	return func() {
 		for {

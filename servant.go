@@ -22,15 +22,15 @@ func setupServantCLI(app *cli.Cli) {
 		func(c *cli.Cmd) {
 			var conf servantConf
 
-			c.Spec = "-p -k... [OPTIONS] ID"
+			c.Spec = "-p [OPTIONS] PUBLIC_KEYS..."
 
 			c.StringOptPtr(&conf.hubAddr, "a addr", ":8813", "The address of the hub server.")
-			c.StringArgPtr(&conf.id, "ID", "", "The id of the servant. It should be unique.")
+			c.StringOptPtr(&conf.id, "i id", id(), "The id of the servant. It should be unique.")
 			c.BoolOptPtr(&conf.websocket, "w ws", false,
 				"Use websocket to connect to hub. If set, the addr should be a websocket address.")
 
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
-			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil, "The public key file paths.")
+			c.StringsArgPtr(&conf.pubKeys, "PUBLIC_KEYS", nil, "The public key file paths.")
 
 			c.BoolOptPtr(&conf.jsonOutput, "j json", true, "json output to stdout")
 

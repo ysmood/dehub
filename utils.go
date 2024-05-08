@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -136,4 +138,13 @@ func readFile(path string) []byte {
 	b, err := os.ReadFile(path)
 	e(err)
 	return b
+}
+
+func id() string {
+	b := make([]byte, 16) //nolint: mnd
+
+	_, err := rand.Read(b)
+	e(err)
+
+	return hex.EncodeToString(b)
 }

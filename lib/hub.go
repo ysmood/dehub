@@ -87,11 +87,11 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 		return fmt.Errorf("failed to store location: %w", err)
 	}
 
-	h.Logger.Info("servant connected", slog.String("name", header.ID.String()))
+	h.Logger.Info("servant connected hub", slog.String("servantId", header.ID.String()))
 
 	<-tunnel.CloseChan()
 
-	h.Logger.Info("servant disconnected", slog.String("name", header.ID.String()))
+	h.Logger.Info("servant disconnected from hub", slog.String("servantId", header.ID.String()))
 
 	h.list.Delete(header.ID)
 
