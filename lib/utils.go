@@ -56,13 +56,13 @@ func WebsocketDial(ctx context.Context, addr string) (net.Conn, error) {
 	return conn, err
 }
 
-func CheckPublicKeys(trustedPubKeys ...[]byte) func(ssh.PublicKey) bool {
+func CheckPublicKeys(trustedPubKeys ...[]byte) (func(ssh.PublicKey) bool, error) {
 	trusted := map[string]struct{}{}
 
 	for _, raw := range trustedPubKeys {
 		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("failed to parse public key: %w", err)
 		}
 
 		trusted[ssh.FingerprintSHA256(key)] = struct{}{}
@@ -71,7 +71,7 @@ func CheckPublicKeys(trustedPubKeys ...[]byte) func(ssh.PublicKey) bool {
 	return func(key ssh.PublicKey) bool {
 		_, ok := trusted[ssh.FingerprintSHA256(key)]
 		return ok
-	}
+	}, nil
 }
 
 func FormatPubKey(key ssh.PublicKey) string {

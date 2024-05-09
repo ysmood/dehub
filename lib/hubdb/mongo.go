@@ -44,7 +44,7 @@ func (db *Mongo) LoadLocation(idPrefix string) (string, error) {
 	err := res.Decode(&data)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return "", fmt.Errorf("%w: %w", ErrNotFound, err)
+			return "", fmt.Errorf("%w via id prefix %w", ErrNotFound, err)
 		}
 
 		return "", fmt.Errorf("failed to load hub location: %w", err)

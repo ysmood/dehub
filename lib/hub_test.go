@@ -108,6 +108,36 @@ func TestMountDir(t *testing.T) {
 	)
 }
 
+func TestServantNotFound(t *testing.T) {
+	g := got.T(t)
+
+	hubAddr := startHub(g, nil)
+
+	masterConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
+	g.Eq(master.Connect(masterConn).Error(),
+		"failed to connect to hub: hub response error: failed to get servant location: not found via id prefix: test")
+}
+
+func TestAuthErr(t *testing.T) {
+	g := got.T(t)
+
+	hubAddr := startHub(g, nil)
+
+	servantConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
+	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
+	go servant.Serve(servantConn)()
+
+	masterConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
+	master := dehub.NewMaster("test", prvKey02(g), pubKey(g))
+	g.Eq(master.Connect(masterConn).Error(),
+		"failed to create ssh client conn: ssh: handshake failed: ssh: unable to authenticate, "+
+			"attempted methods [none publickey], no supported methods remain")
+}
+
 func TestCluster(t *testing.T) {
 	g := got.T(t)
 
@@ -116,6 +146,8 @@ func TestCluster(t *testing.T) {
 		options.Client().ApplyURI("mongodb://localhost:27017"),
 	)
 	g.E(err)
+
+	g.Desc("can't connect to mongodb").E(client.Ping(g.Timeout(3*time.Second), nil))
 
 	db := hubdb.NewMongo(client.Database("test"), "test")
 
@@ -180,12 +212,16 @@ func prvKey(g got.G) ssh.Signer {
 	return key
 }
 
-func pubKey(g got.G) func(ssh.PublicKey) bool {
-	return dehub.CheckPublicKeys(g.Read("fixtures/id_ed25519.pub").Bytes())
+func prvKey02(g got.G) ssh.Signer {
+	key, err := ssh.ParsePrivateKey(g.Read("fixtures/id_02_ed25519").Bytes())
+	g.E(err)
+	return key
 }
 
-func getIP() (string, error) {
-	return "127.0.0.1", nil
+func pubKey(g got.G) func(ssh.PublicKey) bool {
+	fn, err := dehub.CheckPublicKeys(g.Read("fixtures/id_ed25519.pub").Bytes())
+	g.E(err)
+	return fn
 }
 
 func startHub(g got.G, db dehub.DB) string {
@@ -197,8 +233,9 @@ func startHub(g got.G, db dehub.DB) string {
 	}
 
 	hub := dehub.NewHub()
-	hub.GetIP = getIP
 	hub.DB = db
+
+	go hub.MustStartRelay()()
 
 	go func() {
 		for {

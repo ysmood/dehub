@@ -40,6 +40,8 @@ func runHub(conf hubConf) {
 		return myip.New().GetInterfaceIP()
 	}
 
+	go hub.MustStartRelay()()
+
 	hubSrv, err := net.Listen("tcp", conf.addr)
 	e(err)
 

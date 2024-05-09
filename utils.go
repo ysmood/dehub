@@ -110,7 +110,12 @@ func publicKeys(keys []string) func(ssh.PublicKey) bool {
 		list = append(list, readFile(key))
 	}
 
-	return dehub.CheckPublicKeys(list...)
+	fn, err := dehub.CheckPublicKeys(list...)
+	if err != nil {
+		e(err)
+	}
+
+	return fn
 }
 
 func dial(websocket bool, addr string) net.Conn {

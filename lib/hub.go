@@ -26,8 +26,6 @@ func NewHub() *Hub {
 		},
 	}
 
-	go h.startRelay()()
-
 	return h
 }
 
@@ -57,8 +55,6 @@ func (h *Hub) Handle(conn io.ReadWriteCloser) {
 		return
 	}
 
-	startTunnel(conn)
-
 	switch header.Type {
 	case ClientTypeServant:
 		err = h.handleServant(conn, header)
@@ -68,9 +64,7 @@ func (h *Hub) Handle(conn io.ReadWriteCloser) {
 	}
 
 	if err != nil {
-		h.Logger.Error("Failed to handle", slog.Any("err", err))
-
-		_ = conn.Close()
+		writeMsg(conn, err.Error())
 	}
 }
 
@@ -87,6 +81,8 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 		return fmt.Errorf("failed to store location: %w", err)
 	}
 
+	startTunnel(conn)
+
 	h.Logger.Info("servant connected hub", slog.String("servantId", header.ID.String()))
 
 	<-tunnel.CloseChan()
@@ -101,19 +97,15 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 }
 
 func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
-	defer func() { _ = conn.Close() }()
-
 	addr, err := h.DB.LoadLocation(header.ID.String())
 	if err != nil {
-		return fmt.Errorf("failed to load location: %w", err)
+		return fmt.Errorf("failed to get servant location: %w", err)
 	}
 
 	relay, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to dial relay: %w", err)
 	}
-
-	defer func() { _ = relay.Close() }()
 
 	writeMsg(relay, header.ID)
 
@@ -126,6 +118,8 @@ func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 		return fmt.Errorf("relay response error: %s", *res)
 	}
 
+	startTunnel(conn)
+
 	h.Logger.Info("master connected to hub", slog.String("name", header.ID.String()))
 
 	go func() {
@@ -134,24 +128,35 @@ func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 	}()
 
 	_, _ = io.Copy(conn, relay)
+	_ = conn.Close()
 
 	h.Logger.Info("master disconnected", slog.String("name", header.ID.String()))
 
 	return nil
 }
 
-func (h *Hub) startRelay() func() {
-	relay, err := net.Listen("tcp", ":0")
+// MustStartRelay is similar to [Hub.StartRelay].
+func (h *Hub) MustStartRelay() func() {
+	fn, err := h.StartRelay(":0")
 	if err != nil {
 		panic(err)
 	}
 
-	addr, err := h.GetIP()
+	return fn
+}
+
+func (h *Hub) StartRelay(addr string) (func(), error) {
+	relay, err := net.Listen("tcp", addr)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to listen relay: %w", err)
 	}
 
-	h.addr = net.JoinHostPort(addr, strconv.Itoa(relay.Addr().(*net.TCPAddr).Port))
+	ip, err := h.GetIP()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ip for relay: %w", err)
+	}
+
+	h.addr = net.JoinHostPort(ip, strconv.Itoa(relay.Addr().(*net.TCPAddr).Port))
 
 	return func() {
 		for {
@@ -167,19 +172,15 @@ func (h *Hub) startRelay() func() {
 			}
 
 			go func() {
-				defer func() { _ = conn.Close() }()
-
 				err = h.handleRelay(conn)
 				if err != nil {
-					h.Logger.Error("failed to handle relay", slog.Any("err", err))
 					writeMsg(conn, err.Error())
-					return
 				}
 
 				h.Logger.Info("relay disconnected")
 			}()
 		}
-	}
+	}, nil
 }
 
 func (h *Hub) handleRelay(conn net.Conn) error {
@@ -204,8 +205,6 @@ func (h *Hub) handleRelay(conn net.Conn) error {
 		return fmt.Errorf("servant not found: %s", name.String())
 	}
 
-	startTunnel(conn)
-
 	h.Logger.Info("relay connected", slog.String("name", name.String()))
 
 	tunnel, err := servant.Open()
@@ -217,6 +216,8 @@ func (h *Hub) handleRelay(conn net.Conn) error {
 		return fmt.Errorf("failed to open stream: %w", err)
 	}
 
+	startTunnel(conn)
+
 	defer func() { _ = tunnel.Close() }()
 
 	go func() {
@@ -225,6 +226,7 @@ func (h *Hub) handleRelay(conn net.Conn) error {
 	}()
 
 	_, _ = io.Copy(conn, tunnel)
+	_ = conn.Close()
 
 	return nil
 }

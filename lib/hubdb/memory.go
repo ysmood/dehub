@@ -35,7 +35,7 @@ func (db *Memory) LoadLocation(idPrefix string) (string, error) {
 	})
 
 	if addr == "" {
-		return "", fmt.Errorf("%w: %s", ErrNotFound, idPrefix)
+		return "", fmt.Errorf("%w via id prefix: %s", ErrNotFound, idPrefix)
 	}
 
 	return addr, nil
