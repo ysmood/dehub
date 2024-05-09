@@ -30,7 +30,7 @@ func setupServantCLI(app *cli.Cli) {
 				"Use websocket to connect to hub. If set, the addr should be a websocket address.")
 
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
-			c.StringsArgPtr(&conf.pubKeys, "PUBLIC_KEYS", nil, "The public key file paths.")
+			c.StringsArgPtr(&conf.pubKeys, "PUBLIC_KEYS", nil, "The list of public key content or path.")
 
 			c.BoolOptPtr(&conf.jsonOutput, "j json", true, "json output to stdout")
 

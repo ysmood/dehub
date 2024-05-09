@@ -97,11 +97,17 @@ func readLine(prompt string) string {
 	return strings.TrimSpace(line)
 }
 
-func publicKeys(paths []string) func(ssh.PublicKey) bool {
+func publicKeys(keys []string) func(ssh.PublicKey) bool {
 	list := [][]byte{}
 
-	for _, path := range paths {
-		list = append(list, readFile(path))
+	for _, key := range keys {
+		_, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
+		if err == nil {
+			list = append(list, []byte(key))
+			continue
+		}
+
+		list = append(list, readFile(key))
 	}
 
 	return dehub.CheckPublicKeys(list...)
