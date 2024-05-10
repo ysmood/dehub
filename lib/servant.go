@@ -89,19 +89,19 @@ func (s *Servant) serve(conn net.Conn) {
 
 	session, err := yamux.Server(conn, nil)
 	if err != nil {
-		s.Logger.Error("Failed to create yamux session", slog.Any("err", err))
+		s.Logger.Error("failed to create yamux session", slog.Any("err", err))
 		return
 	}
 
 	tunnel, err := session.Accept()
 	if err != nil {
-		s.Logger.Error("Failed to accept tunnel", slog.Any("err", err))
+		s.Logger.Error("failed to accept tunnel", slog.Any("err", err))
 		return
 	}
 
 	sshConn, channels, _, err := ssh.NewServerConn(tunnel, s.sshConf)
 	if err != nil {
-		s.Logger.Error("Failed to handshake", "err", err)
+		s.Logger.Error("failed to handshake", "err", err)
 		return
 	}
 
@@ -141,7 +141,7 @@ func (s *Servant) exec(newChan ssh.NewChannel) {
 
 	ch, reqs, err := newChan.Accept()
 	if err != nil {
-		s.Logger.Error("Failed to accept exec channel", "err", err)
+		s.Logger.Error("failed to accept exec channel", "err", err)
 		return
 	}
 
@@ -153,17 +153,17 @@ func (s *Servant) exec(newChan ssh.NewChannel) {
 				var size pty.Winsize
 				err := json.Unmarshal(req.Payload, &size)
 				if err != nil {
-					s.Logger.Error("Failed to unmarshal terminal size", "err", err)
+					s.Logger.Error("failed to unmarshal terminal size", "err", err)
 					return
 				}
 
 				err = pty.Setsize(p, &size)
 				if err != nil {
-					s.Logger.Error("Failed to set terminal size", "err", err)
+					s.Logger.Error("failed to set terminal size", "err", err)
 					return
 				}
 			} else {
-				s.Logger.Error("Unknown exec request type", "req", req.Type)
+				s.Logger.Error("unknown exec request type", "req", req.Type)
 			}
 		}
 	}()
@@ -178,13 +178,13 @@ func (s *Servant) exec(newChan ssh.NewChannel) {
 func (s *Servant) forwardSocks5(newChan ssh.NewChannel) {
 	ch, _, err := newChan.Accept()
 	if err != nil {
-		s.Logger.Error("Failed to accept socks5 channel", "err", err)
+		s.Logger.Error("failed to accept socks5 channel", "err", err)
 		return
 	}
 
 	tunnel, err := yamux.Server(ch, nil)
 	if err != nil {
-		s.Logger.Error("Failed to create yamux session", slog.Any("err", err))
+		s.Logger.Error("failed to create yamux session", slog.Any("err", err))
 		return
 	}
 
@@ -197,7 +197,7 @@ func (s *Servant) forwardSocks5(newChan ssh.NewChannel) {
 				return
 			}
 
-			s.Logger.Error("Failed to accept stream", slog.Any("err", err))
+			s.Logger.Error("failed to accept stream", slog.Any("err", err))
 			return
 		}
 
@@ -217,13 +217,13 @@ func (s *Servant) shareDir(newChan ssh.NewChannel) {
 
 	ch, _, err := newChan.Accept()
 	if err != nil {
-		s.Logger.Error("Failed to accept ShareDir channel", "err", err)
+		s.Logger.Error("failed to accept ShareDir channel", "err", err)
 		return
 	}
 
 	tunnel, err := yamux.Server(ch, nil)
 	if err != nil {
-		s.Logger.Error("Failed to create yamux session", "err", err)
+		s.Logger.Error("failed to create yamux session", "err", err)
 	}
 
 	if _, err := os.Stat(meta.Path); os.IsNotExist(err) {

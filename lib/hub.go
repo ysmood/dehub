@@ -48,10 +48,15 @@ func connectHub(conn io.ReadWriter, typ ClientType, name ServantID) error {
 }
 
 func (h *Hub) Handle(conn io.ReadWriteCloser) {
+	if h.addr == "" {
+		writeMsg(conn, "relay server failed to start")
+		return
+	}
+
 	header, err := readMsg[HubHeader](conn)
 	if err != nil {
-		h.Logger.Error("Failed to read header", slog.Any("err", err))
-		writeMsg(conn, "Failed to read header: "+err.Error())
+		h.Logger.Error("failed to read header", slog.Any("err", err))
+		writeMsg(conn, "failed to read header: "+err.Error())
 		return
 	}
 
@@ -169,6 +174,8 @@ func (h *Hub) StartRelay(addr string) (func(), error) {
 	}
 
 	h.addr = net.JoinHostPort(ip, strconv.Itoa(relay.Addr().(*net.TCPAddr).Port))
+
+	h.Logger.Info("relay server started", slog.String("addr", h.addr))
 
 	return func() {
 		for {
