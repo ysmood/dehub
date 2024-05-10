@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/hashicorp/yamux"
 	"github.com/ysmood/dehub/lib/hubdb"
@@ -81,6 +81,13 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 		return fmt.Errorf("failed to store location: %w", err)
 	}
 
+	go func() {
+		for {
+			time.Sleep(hubdb.HeartbeatInterval)
+			_ = h.DB.StoreLocation(header.ID.String(), h.addr)
+		}
+	}()
+
 	startTunnel(conn)
 
 	h.Logger.Info("servant connected hub", slog.String("servantId", header.ID.String()))
@@ -91,13 +98,18 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 
 	h.list.Delete(header.ID)
 
+	err = h.DB.DeleteLocation(header.ID.String())
+	if err != nil {
+		return fmt.Errorf("failed to delete location: %w", err)
+	}
+
 	_ = conn.Close()
 
 	return nil
 }
 
 func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
-	addr, err := h.DB.LoadLocation(header.ID.String())
+	addr, id, err := h.DB.LoadLocation(header.ID.String())
 	if err != nil {
 		return fmt.Errorf("failed to get servant location: %w", err)
 	}
@@ -107,7 +119,7 @@ func (h *Hub) handleMaster(conn io.ReadWriteCloser, header *HubHeader) error {
 		return fmt.Errorf("failed to dial relay: %w", err)
 	}
 
-	writeMsg(relay, header.ID)
+	writeMsg(relay, id)
 
 	res, err := readMsg[string](relay)
 	if err != nil {
@@ -184,28 +196,18 @@ func (h *Hub) StartRelay(addr string) (func(), error) {
 }
 
 func (h *Hub) handleRelay(conn net.Conn) error {
-	name, err := readMsg[ServantID](conn)
+	id, err := readMsg[ServantID](conn)
 	if err != nil {
 		return fmt.Errorf("failed to read servant name: %w", err)
 	}
 
-	var servant *yamux.Session
-
-	h.list.Range(func(key ServantID, value *yamux.Session) bool {
-		if strings.HasPrefix(key.String(), name.String()) {
-			servant = value
-
-			return false
-		}
-
-		return true
-	})
-
-	if servant == nil {
-		return fmt.Errorf("servant not found: %s", name.String())
+	servant, has := h.list.Load(*id)
+	if !has {
+		_ = h.DB.DeleteLocation(id.String())
+		return fmt.Errorf("servant not found: %s", id.String())
 	}
 
-	h.Logger.Info("relay connected", slog.String("name", name.String()))
+	h.Logger.Info("relay connected", slog.String("name", id.String()))
 
 	tunnel, err := servant.Open()
 	if err != nil {

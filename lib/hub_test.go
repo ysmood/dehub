@@ -154,25 +154,29 @@ func TestCluster(t *testing.T) {
 	hub01Addr := startHub(g, db)
 	hub02Addr := startHub(g, db)
 
-	startServant := func(name dehub.ServantID, hubAddr string) {
+	startServant := func(name dehub.ServantID, hubAddr string) net.Conn {
 		servantConn, err := net.Dial("tcp", hubAddr)
 		g.E(err)
 
 		servant := dehub.NewServant(name, prvKey(g), pubKey(g))
 
 		go servant.Serve(servantConn)()
+
+		return servantConn
 	}
 
-	startServant("test01", hub01Addr)
-	startServant("test02", hub02Addr)
+	servant01 := dehub.ServantID(g.RandStr(8))
 
-	time.Sleep(time.Second)
+	servantConn01 := startServant(servant01, hub01Addr)
+	startServant(dehub.ServantID(g.RandStr(8)), hub02Addr)
+
+	time.Sleep(100 * time.Millisecond)
 
 	testMaster := func(hubAddr string) {
 		masterConn, err := net.Dial("tcp", hubAddr)
 		g.E(err)
 
-		master := dehub.NewMaster("test01", prvKey(g), pubKey(g))
+		master := dehub.NewMaster(servant01, prvKey(g), pubKey(g))
 		g.E(master.Connect(masterConn))
 
 		txt := g.RandStr(1024)
@@ -185,6 +189,12 @@ func TestCluster(t *testing.T) {
 
 	testMaster(hub01Addr)
 	testMaster(hub02Addr)
+
+	g.E(db.LoadLocation(servant01.String()))
+	g.E(servantConn01.Close())
+	time.Sleep(100 * time.Millisecond)
+	_, _, err = db.LoadLocation(servant01.String())
+	g.Eq(err.Error(), "not found via id prefix mongo: no documents in result")
 }
 
 func nfsReadFile(g got.G, addr *net.TCPAddr, path string) string {

@@ -36,7 +36,8 @@ type HubHeader struct {
 // DB store the location of which hub node the servant is connected to.
 type DB interface {
 	StoreLocation(id string, netAddr string) error
-	LoadLocation(idPrefix string) (netAddr string, err error)
+	LoadLocation(idPrefix string) (netAddr string, id string, err error)
+	DeleteLocation(id string) error
 }
 
 type Master struct {
