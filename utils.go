@@ -105,14 +105,14 @@ func publicKeys(keys []string) func(ssh.PublicKey) bool {
 		if err == nil {
 			list = append(list, []byte(key))
 			continue
-		} else {
-			fmt.Fprintf(os.Stderr, "failed to parse as public key %s: %s\n", err.Error(), key)
 		}
+
+		parseErr := err
 
 		b := readFile(key)
 		_, _, _, _, err = ssh.ParseAuthorizedKey(b)
 		if err != nil {
-			e(fmt.Errorf("failed to parse the public key %w: %s", err, key))
+			e(fmt.Errorf("failed get public key from '%s': %w, %w", key, parseErr, err))
 		}
 
 		list = append(list, b)
