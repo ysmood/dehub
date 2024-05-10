@@ -107,7 +107,13 @@ func publicKeys(keys []string) func(ssh.PublicKey) bool {
 			continue
 		}
 
-		list = append(list, readFile(key))
+		b := readFile(key)
+		_, _, _, _, err = ssh.ParseAuthorizedKey(b)
+		if err != nil {
+			e(fmt.Errorf("failed to parse the public key %w: %s", err, key))
+		}
+
+		list = append(list, b)
 	}
 
 	fn, err := dehub.CheckPublicKeys(list...)

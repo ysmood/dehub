@@ -1,6 +1,7 @@
 package dehub
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -35,7 +36,9 @@ func NewServant(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool)
 	s.sshConf = &ssh.ServerConfig{
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if check(key) {
-				s.Logger.Info("authorized master public key", slog.String("master-pubkey", FormatPubKey(key)))
+				s.Logger.Info("authorized master public key",
+					slog.String("session-id", hex.EncodeToString(conn.SessionID())),
+					slog.String("master-pubkey", FormatPubKey(key)))
 
 				return nil, nil //nolint: nilnil
 			}
@@ -96,11 +99,16 @@ func (s *Servant) serve(conn net.Conn) {
 		return
 	}
 
-	_, channels, _, err := ssh.NewServerConn(tunnel, s.sshConf)
+	sshConn, channels, _, err := ssh.NewServerConn(tunnel, s.sshConf)
 	if err != nil {
 		s.Logger.Error("Failed to handshake", "err", err)
 		return
 	}
+
+	go func() {
+		<-session.CloseChan()
+		s.Logger.Info("master disconnected", slog.String("session-id", hex.EncodeToString(sshConn.SessionID())))
+	}()
 
 	for newChan := range channels {
 		switch Command(newChan.ChannelType()) {
