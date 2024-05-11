@@ -87,7 +87,7 @@ func (h *Hub) handleServant(conn io.ReadWriteCloser, header *HubHeader) error {
 	}
 
 	go func() {
-		for {
+		for !tunnel.IsClosed() {
 			time.Sleep(hubdb.HeartbeatInterval)
 			_ = h.DB.StoreLocation(header.ID.String(), h.addr)
 		}
