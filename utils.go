@@ -126,22 +126,34 @@ func publicKeys(keys []string) func(ssh.PublicKey) bool {
 	return fn
 }
 
-func dial(websocket bool, addr string) net.Conn {
+func mustDial(websocket bool, addr string) net.Conn {
+	conn, err := dial(websocket, addr)
+	e(err)
+
+	return conn
+}
+
+func dial(websocket bool, addr string) (net.Conn, error) {
 	if websocket {
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		defer cancel()
 
 		if !strings.HasPrefix(addr, "ws") {
-			e(fmt.Errorf("The '--addr' cli option should be a websocket url when '-w' is set: %s", addr))
+			return nil, fmt.Errorf("The '--addr' cli option should be a websocket url when '-w' is set: %s", addr)
 		}
 
 		conn, err := dehub.WebsocketDial(ctx, addr)
-		e(err)
-		return conn
+		if err != nil {
+			return nil, err
+		}
+
+		return conn, nil
 	} else {
 		conn, err := net.DialTimeout("tcp", addr, dialTimeout)
-		e(err)
-		return conn
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
 	}
 }
 
@@ -166,4 +178,30 @@ func id() string {
 	e(err)
 
 	return hex.EncodeToString(b)
+}
+
+type RetryInterval time.Duration
+
+func (d *RetryInterval) Set(v string) error {
+	parsed, err := time.ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	*d = RetryInterval(parsed)
+	return nil
+}
+
+func (d *RetryInterval) String() string {
+	if *d == 0 {
+		return "5s"
+	}
+	return time.Duration(*d).String()
+}
+
+func (d *RetryInterval) Get() time.Duration {
+	if *d == 0 {
+		_ = d.Set(d.String())
+	}
+
+	return time.Duration(*d)
 }

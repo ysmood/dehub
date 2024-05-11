@@ -76,7 +76,7 @@ func runMaster(conf masterConf) { //nolint: funlen
 	})
 	master.Logger = output(false)
 
-	e(master.Connect(dial(conf.websocket, conf.hubAddr)))
+	e(master.Connect(mustDial(conf.websocket, conf.hubAddr)))
 
 	wait := false
 
