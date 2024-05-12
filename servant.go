@@ -27,7 +27,7 @@ func setupServantCLI(app *cli.Cli) {
 
 			c.Spec = "-p [OPTIONS] PUBLIC_KEYS..."
 
-			c.StringOptPtr(&conf.hubAddr, "a addr", ":8813", "The address of the hub server.")
+			c.StringOptPtr(&conf.hubAddr, "a addr", "dehub.ysmood.org:8813", "The address of the hub server.")
 			c.StringOptPtr(&conf.id, "i id", id(), "The id of the servant. It should be unique.")
 			c.BoolOptPtr(&conf.websocket, "w ws", false,
 				"Use websocket to connect to hub. If set, the addr should be a websocket address.")
