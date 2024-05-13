@@ -24,9 +24,9 @@ import (
 
 func output(jsonOutput bool) *slog.Logger {
 	if jsonOutput {
-		return slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		return slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	}
-	return slog.New(tint.NewHandler(os.Stdout, nil))
+	return slog.New(tint.NewHandler(os.Stderr, nil))
 }
 
 func outputToFile(path string) *slog.Logger {
