@@ -12,6 +12,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/hashicorp/yamux"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/term"
 )
 
@@ -19,10 +20,21 @@ func (c Command) String() string {
 	return string(c)
 }
 
+// NewMaster creates a new master instance.
+// If the prvKey is nil, it will try ssh agent to use the private key.
 func NewMaster(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool) *Master {
+	authMethods := []ssh.AuthMethod{}
+	if prvKey == nil {
+		agentConn, _ := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
+		agentClient := agent.NewClient(agentConn)
+		authMethods = append(authMethods, ssh.PublicKeysCallback(agentClient.Signers))
+	} else {
+		authMethods = append(authMethods, ssh.PublicKeys(prvKey))
+	}
+
 	sshConf := &ssh.ClientConfig{
 		User: "user",
-		Auth: []ssh.AuthMethod{ssh.PublicKeys(prvKey)},
+		Auth: authMethods,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			if check(key) {
 				return nil
@@ -39,6 +51,7 @@ func NewMaster(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool) 
 	}
 }
 
+// Connect to hub server.
 func (m *Master) Connect(conn io.ReadWriteCloser) error {
 	err := connectHub(conn, ClientTypeMaster, m.servantID)
 	if err != nil {

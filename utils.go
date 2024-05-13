@@ -40,6 +40,10 @@ func outputToFile(path string) *slog.Logger {
 const dialTimeout = time.Second * 10
 
 func privateKey(path string) ssh.Signer {
+	if path == "" {
+		return nil
+	}
+
 	b := readFile(path)
 
 	_, err := secure.SSHPrvKey(b, "")

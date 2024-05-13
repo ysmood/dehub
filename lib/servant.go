@@ -38,7 +38,7 @@ func NewServant(id ServantID, prvKey ssh.Signer, check func(ssh.PublicKey) bool)
 			if check(key) {
 				s.Logger.Info("authorized master public key",
 					slog.String("session-id", hex.EncodeToString(conn.SessionID())),
-					slog.String("master-pubkey", FormatPubKey(key)))
+					slog.String("master-pubkey", ssh.FingerprintSHA256(key)))
 
 				return nil, nil //nolint: nilnil
 			}

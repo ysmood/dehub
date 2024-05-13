@@ -37,7 +37,7 @@ func setupMasterCLI(app *cli.Cli) {
 		func(c *cli.Cmd) {
 			var conf masterConf
 
-			c.Spec = "-p [OPTIONS] ID_PREFIX"
+			c.Spec = "[OPTIONS] ID_PREFIX"
 
 			c.StringArgPtr(&conf.id, "ID_PREFIX", "", "The id prefix of the servant to command, "+
 				"it will connect to the first servant id that match the id prefix.")
@@ -66,13 +66,13 @@ func setupMasterCLI(app *cli.Cli) {
 func runMaster(conf masterConf) { //nolint: funlen
 	checkKey := publicKeys(conf.pubKeys)
 
-	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), func(pk ssh.PublicKey) bool {
+	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), func(key ssh.PublicKey) bool {
 		if len(conf.pubKeys) == 0 {
-			return readLine("Do you trust the servant public key:\n"+dehub.FormatPubKey(pk)+"\n"+
+			return readLine("Do you trust the servant public key:\n"+ssh.FingerprintSHA256(key)+"\n"+
 				`Input ENTER to trust, input any other to abort: `) == ""
 		}
 
-		return checkKey(pk)
+		return checkKey(key)
 	})
 	master.Logger = output(false)
 
