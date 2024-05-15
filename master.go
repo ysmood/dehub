@@ -21,7 +21,8 @@ type masterConf struct {
 
 	outputFile string
 
-	socks5 string
+	socks5    string
+	httpProxy string
 
 	nfsAddr   string
 	remoteDir string
@@ -51,6 +52,7 @@ func setupMasterCLI(app *cli.Cli) {
 			c.StringOptPtr(&conf.outputFile, "o output", "tmp/dehub-master.log", "The file path to append the output.")
 
 			c.StringOptPtr(&conf.socks5, "s socks5", "", "The address of the socks5 server.")
+			c.StringOptPtr(&conf.httpProxy, "x http-proxy", "", "The address of the http proxy server.")
 
 			c.StringOptPtr(&conf.nfsAddr, "n nfs-addr", "", "The address of the nfs server.")
 			c.StringOptPtr(&conf.remoteDir, "r remote-dir", ".", "The remote directory to serve.")
@@ -88,6 +90,18 @@ func runMaster(conf masterConf) { //nolint: funlen
 		master.Logger.Info("socks5 server on", "addr", l.Addr().String())
 
 		go func() { e(master.ForwardSocks5(l)) }()
+
+		wait = true
+	}
+
+	// Forward http
+	if conf.httpProxy != "" {
+		l, err := net.Listen("tcp", conf.httpProxy)
+		e(err)
+
+		master.Logger.Info("http proxy server on", "addr", l.Addr().String())
+
+		go func() { e(master.ForwardHTTP(l)) }()
 
 		wait = true
 	}

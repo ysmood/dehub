@@ -1,18 +1,22 @@
 package dehub
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 
 	"github.com/creack/pty"
+	"github.com/elazarl/goproxy"
 	"github.com/hashicorp/yamux"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/net/proxy"
 	"golang.org/x/term"
 )
 
@@ -143,7 +147,7 @@ func (m *Master) ForwardSocks5(listenTo net.Listener) error {
 				return nil
 			}
 
-			return fmt.Errorf("failed to accept sock5 connection: %w", err)
+			return fmt.Errorf("failed to accept socks5 connection: %w", err)
 		}
 
 		m.Logger.Info("new socks5 connection")
@@ -174,6 +178,29 @@ func (m *Master) ForwardSocks5(listenTo net.Listener) error {
 			_ = src.Close()
 		}()
 	}
+}
+
+func (m *Master) ForwardHTTP(listenTo net.Listener) error {
+	ch, _, err := m.sshConn.OpenChannel(CommandForwardSocks5.String(), nil)
+	if err != nil {
+		return fmt.Errorf("failed to open http proxy channel: %w", err)
+	}
+
+	defer func() { _ = ch.Close() }()
+
+	tunnel, err := yamux.Client(ch, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create http proxy yamux tunnel: %w", err)
+	}
+
+	dialer, _ := proxy.SOCKS5("tcp", "", nil, &tunnelDialer{tunnel})
+
+	httpProxy := goproxy.NewProxyHttpServer()
+	httpProxy.Tr.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
+		return dialer.Dial(network, addr)
+	}
+
+	return http.Serve(listenTo, httpProxy)
 }
 
 func (m *Master) ServeNFS(remoteDir string, fsSrv net.Listener, cacheLimit int) error {
@@ -242,4 +269,14 @@ func (m *Master) serveNFS(tunnel *yamux.Session, fServer net.Listener) {
 			}()
 		}
 	}()
+}
+
+type tunnelDialer struct {
+	tunnel interface {
+		Open() (net.Conn, error)
+	}
+}
+
+func (d *tunnelDialer) Dial(network, address string) (net.Conn, error) {
+	return d.tunnel.Open()
 }

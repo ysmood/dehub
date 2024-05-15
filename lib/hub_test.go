@@ -3,8 +3,10 @@ package dehub_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -64,6 +66,40 @@ func TestSocks5(t *testing.T) {
 
 	res := reqViaProxy(g, proxyServer.Addr().String(), "http://example.com")
 	g.Has(res, "Example Domain")
+}
+
+func TestHTTPProxy(t *testing.T) {
+	g := got.T(t)
+
+	hubAddr := startHub(g, nil)
+
+	servantConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
+	servant := dehub.NewServant("test", prvKey(g), pubKey(g))
+	go servant.Serve(servantConn)()
+
+	masterConn, err := net.Dial("tcp", hubAddr)
+	g.E(err)
+	master := dehub.NewMaster("test", prvKey(g), pubKey(g))
+	g.E(master.Connect(masterConn))
+
+	proxyServer, err := net.Listen("tcp", ":0")
+	g.E(err)
+
+	go func() { g.E(master.ForwardHTTP(proxyServer)) }()
+
+	proxyUrl, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", proxyServer.Addr().(*net.TCPAddr).Port))
+	g.E(err)
+
+	req, err := http.NewRequestWithContext(g.Context(), "", "http://example.com", nil)
+	g.E(err)
+
+	c := http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)}}
+	res, err := c.Do(req)
+	g.E(err)
+	defer func() { g.E(res.Body.Close()) }()
+
+	g.Has(g.Read(res.Body).String(), "Example Domain")
 }
 
 func reqViaProxy(g got.G, proxyHost string, u string) string {

@@ -33,6 +33,7 @@ require (
 )
 
 require (
+	github.com/elazarl/goproxy v0.0.0-20231117061959-7cc037d33fb5
 	github.com/go-git/go-billy/v5 v5.5.0
 	github.com/gobwas/ws v1.4.0
 	github.com/jawher/mow.cli v1.2.0
