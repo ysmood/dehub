@@ -38,7 +38,7 @@ func setupMasterCLI(app *cli.Cli) {
 		func(c *cli.Cmd) {
 			var conf masterConf
 
-			c.Spec = "[OPTIONS] ID_PREFIX"
+			c.Spec = "[OPTIONS] ID_PREFIX [-- CMD [CMD_ARGS...]]"
 
 			c.StringArgPtr(&conf.id, "ID_PREFIX", "", "The id prefix of the servant to command, "+
 				"it will connect to the first servant id that match the id prefix.")
@@ -59,7 +59,8 @@ func setupMasterCLI(app *cli.Cli) {
 			c.StringOptPtr(&conf.localDir, "l local-dir", "", "The local directory to sync.")
 
 			c.StringOptPtr(&conf.cmdName, "c cmd", "", "The command to run.")
-			c.StringsOptPtr(&conf.cmdArgs, "g cmd-args", nil, "The arguments of the command.")
+			c.StringArgPtr(&conf.cmdName, "CMD", "", "The command to run.")
+			c.StringsArgPtr(&conf.cmdArgs, "CMD_ARGS", nil, "The arguments of the command.")
 
 			c.Action = func() { runMaster(conf) }
 		})
