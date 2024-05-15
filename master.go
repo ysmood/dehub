@@ -23,6 +23,7 @@ type masterConf struct {
 
 	socks5    string
 	httpProxy string
+	grpcProxy string
 
 	nfsAddr   string
 	remoteDir string
@@ -53,6 +54,7 @@ func setupMasterCLI(app *cli.Cli) {
 
 			c.StringOptPtr(&conf.socks5, "s socks5", "", "The address of the socks5 server.")
 			c.StringOptPtr(&conf.httpProxy, "x http-proxy", "", "The address of the http proxy server.")
+			c.StringOptPtr(&conf.grpcProxy, "g grpc-proxy", "", "The address of the grpc proxy server.")
 
 			c.StringOptPtr(&conf.nfsAddr, "n nfs-addr", "", "The address of the nfs server.")
 			c.StringOptPtr(&conf.remoteDir, "r remote-dir", ".", "The remote directory to serve.")
@@ -103,6 +105,18 @@ func runMaster(conf masterConf) { //nolint: funlen
 		master.Logger.Info("http proxy server on", "addr", l.Addr().String())
 
 		go func() { e(master.ForwardHTTP(l)) }()
+
+		wait = true
+	}
+
+	// Forward grpc
+	if conf.grpcProxy != "" {
+		l, err := net.Listen("tcp", conf.grpcProxy)
+		e(err)
+
+		master.Logger.Info("grpc proxy server on", "addr", l.Addr().String())
+
+		go func() { e(master.ForwardGRPC(l)) }()
 
 		wait = true
 	}
