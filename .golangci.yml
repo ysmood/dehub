@@ -40,6 +40,10 @@ linters-settings:
   cyclop:
     max-complexity: 12
 
+  gomoddirectives:
+    replace-allow-list:
+      - github.com/bradleyjkemp/grpc-tools
+
 issues:
   exclude-use-default: false
   exclude-dirs-use-default: false
