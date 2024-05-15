@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 
+	grpc_proxy "github.com/bradleyjkemp/grpc-tools/grpc-proxy"
 	"github.com/creack/pty"
 	"github.com/elazarl/goproxy"
 	"github.com/hashicorp/yamux"
@@ -218,36 +219,13 @@ func (m *Master) ForwardGRPC(listenTo net.Listener) error {
 
 	dialer, _ := proxy.SOCKS5("tcp", "", nil, &tunnelDialer{tunnel})
 
-	return http.Serve(listenTo, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dst, err := dialer.Dial("tcp", r.Host)
-		if err != nil {
-			http.Error(w, fmt.Errorf("failed to open socks5 proxy for grpc: %w", err).Error(), http.StatusServiceUnavailable)
-			return
-		}
+	proxyServer, _ := grpc_proxy.New(
+		grpc_proxy.WithDialer(func(ctx context.Context, s string) (net.Conn, error) {
+			return dialer.Dial("tcp", s)
+		}),
+	)
 
-		m.Logger.Info("new grpc proxy connection")
-
-		w.WriteHeader(http.StatusOK)
-
-		src, _, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			panic(err)
-		}
-
-		go func() {
-			_, err := io.Copy(dst, src)
-			if err != nil {
-				m.Logger.Error(err.Error())
-			}
-			_ = dst.Close()
-		}()
-
-		_, err = io.Copy(src, dst)
-		if err != nil {
-			m.Logger.Error(err.Error())
-		}
-		_ = src.Close()
-	}))
+	return proxyServer.Start(listenTo)
 }
 
 func (m *Master) ServeNFS(remoteDir string, fsSrv net.Listener, cacheLimit int) error {
