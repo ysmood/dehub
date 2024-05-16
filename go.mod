@@ -2,8 +2,6 @@ module github.com/ysmood/dehub
 
 go 1.22.1
 
-replace github.com/bradleyjkemp/grpc-tools => github.com/ysmood/grpc-tools v0.0.2
-
 require (
 	github.com/creack/pty v1.1.21
 	github.com/hashicorp/yamux v0.1.1
@@ -45,7 +43,6 @@ require (
 )
 
 require (
-	github.com/bradleyjkemp/grpc-tools v0.0.0-00010101000000-000000000000
 	github.com/elazarl/goproxy v0.0.0-20231117061959-7cc037d33fb5
 	github.com/go-git/go-billy/v5 v5.5.0
 	github.com/gobwas/ws v1.4.0
@@ -55,6 +52,7 @@ require (
 	github.com/willscott/go-nfs v0.0.2
 	github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00
 	github.com/ysmood/byframe v1.1.3
+	github.com/ysmood/grpc-tools v0.0.3
 	github.com/ysmood/myip v1.0.3
 	github.com/ysmood/whisper v0.9.0
 	go.mongodb.org/mongo-driver v1.15.0

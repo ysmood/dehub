@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"os"
 
-	grpc_proxy "github.com/bradleyjkemp/grpc-tools/grpc-proxy"
 	"github.com/creack/pty"
 	"github.com/elazarl/goproxy"
 	"github.com/hashicorp/yamux"
+	grpc_proxy "github.com/ysmood/grpc-tools/grpc-proxy"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/net/proxy"
