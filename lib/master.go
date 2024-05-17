@@ -1,7 +1,6 @@
 package dehub
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,12 +8,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 
 	"github.com/creack/pty"
-	"github.com/elazarl/goproxy"
 	"github.com/hashicorp/yamux"
-	grpc_proxy "github.com/ysmood/grpc-tools/grpc-proxy"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/net/proxy"
@@ -151,7 +149,7 @@ func (m *Master) ForwardSocks5(listenTo net.Listener) error {
 			return fmt.Errorf("failed to accept socks5 connection: %w", err)
 		}
 
-		m.Logger.Info("new socks5 connection")
+		m.Logger.Info("socks5 connection")
 
 		go func() {
 			stream, err := tunnel.Open()
@@ -196,36 +194,52 @@ func (m *Master) ForwardHTTP(listenTo net.Listener) error {
 
 	dialer, _ := proxy.SOCKS5("tcp", "", nil, &tunnelDialer{tunnel})
 
-	httpProxy := goproxy.NewProxyHttpServer()
-	httpProxy.Tr.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
-		return dialer.Dial(network, addr)
-	}
+	return http.Serve(listenTo, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.Logger.Info("http proxy connection")
 
-	return http.Serve(listenTo, httpProxy)
+		if r.Method == http.MethodConnect {
+			m.forwardHTTPConnect(dialer, w, r)
+			return
+		}
+
+		proxy := httputil.NewSingleHostReverseProxy(r.URL)
+		proxy.Transport = &http.Transport{Dial: dialer.Dial}
+		proxy.ServeHTTP(w, r)
+	}))
 }
 
-func (m *Master) ForwardGRPC(listenTo net.Listener) error {
-	ch, _, err := m.sshConn.OpenChannel(CommandForwardSocks5.String(), nil)
+func (m *Master) forwardHTTPConnect(dialer proxy.Dialer, w http.ResponseWriter, r *http.Request) {
+	src, _, err := w.(http.Hijacker).Hijack()
 	if err != nil {
-		return fmt.Errorf("failed to open http proxy channel: %w", err)
+		m.Logger.Error("failed to hijack http proxy connection", "err", err)
+		return
 	}
 
-	defer func() { _ = ch.Close() }()
-
-	tunnel, err := yamux.Client(ch, nil)
+	_, err = fmt.Fprintf(src, "%s 200 OK\r\n\r\n", r.Proto)
 	if err != nil {
-		return fmt.Errorf("failed to create http proxy yamux tunnel: %w", err)
+		m.Logger.Error("failed to write http proxy response", "err", err)
+		return
 	}
 
-	dialer, _ := proxy.SOCKS5("tcp", "", nil, &tunnelDialer{tunnel})
+	dst, err := dialer.Dial("tcp", r.URL.Host)
+	if err != nil {
+		m.Logger.Error("failed to dial http proxy", "err", err)
+		return
+	}
 
-	proxyServer, _ := grpc_proxy.New(
-		grpc_proxy.WithDialer(func(ctx context.Context, s string) (net.Conn, error) {
-			return dialer.Dial("tcp", s)
-		}),
-	)
+	go func() {
+		_, err = io.Copy(dst, src)
+		if err != nil {
+			m.Logger.Error("failed to copy http proxy connection", "err", err)
+		}
+		_ = dst.Close()
+	}()
 
-	return proxyServer.Start(listenTo)
+	_, err = io.Copy(src, dst)
+	if err != nil {
+		m.Logger.Error("failed to copy http proxy connection", "err", err)
+	}
+	_ = src.Close()
 }
 
 func (m *Master) ServeNFS(remoteDir string, fsSrv net.Listener, cacheLimit int) error {

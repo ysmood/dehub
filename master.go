@@ -23,7 +23,6 @@ type masterConf struct {
 
 	socks5    string
 	httpProxy string
-	grpcProxy string
 
 	nfsAddr   string
 	remoteDir string
@@ -54,7 +53,6 @@ func setupMasterCLI(app *cli.Cli) {
 
 			c.StringOptPtr(&conf.socks5, "s socks5", "", "The address of the socks5 server.")
 			c.StringOptPtr(&conf.httpProxy, "x http-proxy", "", "The address of the http proxy server.")
-			c.StringOptPtr(&conf.grpcProxy, "g grpc-proxy", "", "The address of the grpc proxy server.")
 
 			c.StringOptPtr(&conf.nfsAddr, "n nfs-addr", "", "The address of the nfs server.")
 			c.StringOptPtr(&conf.remoteDir, "r remote-dir", ".", "The remote directory to serve.")
@@ -69,7 +67,8 @@ func setupMasterCLI(app *cli.Cli) {
 }
 
 func runMaster(conf masterConf) { //nolint: funlen
-	checkKey := publicKeys(conf.pubKeys)
+	logger := output(false)
+	checkKey := publicKeys(logger, conf.pubKeys)
 
 	master := dehub.NewMaster(dehub.ServantID(conf.id), privateKey(conf.prvKey), func(key ssh.PublicKey) bool {
 		if len(conf.pubKeys) == 0 {
@@ -79,7 +78,7 @@ func runMaster(conf masterConf) { //nolint: funlen
 
 		return checkKey(key)
 	})
-	master.Logger = output(false)
+	master.Logger = logger
 
 	e(master.Connect(mustDial(conf.websocket, conf.hubAddr)))
 
@@ -90,7 +89,7 @@ func runMaster(conf masterConf) { //nolint: funlen
 		l, err := net.Listen("tcp", conf.socks5)
 		e(err)
 
-		master.Logger.Info("socks5 server on", "addr", l.Addr().String())
+		logger.Info("socks5 server on", "addr", l.Addr().String())
 
 		go func() { e(master.ForwardSocks5(l)) }()
 
@@ -102,21 +101,9 @@ func runMaster(conf masterConf) { //nolint: funlen
 		l, err := net.Listen("tcp", conf.httpProxy)
 		e(err)
 
-		master.Logger.Info("http proxy server on", "addr", l.Addr().String())
+		logger.Info("http proxy server on", "addr", l.Addr().String())
 
 		go func() { e(master.ForwardHTTP(l)) }()
-
-		wait = true
-	}
-
-	// Forward grpc
-	if conf.grpcProxy != "" {
-		l, err := net.Listen("tcp", conf.grpcProxy)
-		e(err)
-
-		master.Logger.Info("grpc proxy server on", "addr", l.Addr().String())
-
-		go func() { e(master.ForwardGRPC(l)) }()
 
 		wait = true
 	}
@@ -128,7 +115,7 @@ func runMaster(conf masterConf) { //nolint: funlen
 
 		go func() { e(master.ServeNFS(conf.remoteDir, fsSrv, 0)) }()
 
-		master.Logger.Info("nfs server on", "addr", fsSrv.Addr().String())
+		logger.Info("nfs server on", "addr", fsSrv.Addr().String())
 
 		localDir := conf.localDir
 		if localDir == "" {
@@ -139,19 +126,19 @@ func runMaster(conf masterConf) { //nolint: funlen
 		e(utils.MountNFS(fsSrv.Addr().(*net.TCPAddr), localDir))
 		defer func() {
 			e(utils.UnmountNFS(localDir))
-			master.Logger.Info("nfs unmounted", "dir", localDir)
+			logger.Info("nfs unmounted", "dir", localDir)
 		}()
-		master.Logger.Info("nfs mounted", "dir", localDir)
+		logger.Info("nfs mounted", "dir", localDir)
 
 		wait = true
 	}
 
 	// Run remote shell command
 	if conf.cmdName != "" {
-		master.Logger.Info("run command", "cmd", conf.cmdName, "args", conf.cmdArgs)
-		master.Logger.Info("output log to", "file", conf.outputFile)
+		logger.Info("run command", "cmd", conf.cmdName, "args", conf.cmdArgs)
+		logger.Info("output log to", "file", conf.outputFile)
 
-		master.Logger = outputToFile(conf.outputFile)
+		logger = outputToFile(conf.outputFile)
 
 		e(master.Exec(os.Stdin, os.Stdout, conf.cmdName, conf.cmdArgs...))
 	} else if wait {

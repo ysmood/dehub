@@ -43,18 +43,19 @@ func setupServantCLI(app *cli.Cli) {
 }
 
 func runServant(conf servantConf) {
-	servant := dehub.NewServant(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(conf.pubKeys))
-	servant.Logger = output(conf.jsonOutput)
+	logger := output(conf.jsonOutput)
+	servant := dehub.NewServant(dehub.ServantID(conf.id), privateKey(conf.prvKey), publicKeys(logger, conf.pubKeys))
+	servant.Logger = logger
 
 	for {
 		conn, err := dial(conf.websocket, conf.hubAddr)
 		if err != nil {
-			servant.Logger.Error("failed to connect to the hub", "err", err)
+			logger.Error("failed to connect to the hub", "err", err)
 		} else {
 			servant.Serve(conn)()
 		}
 
-		servant.Logger.Info("servant retries to connect to the hub", "wait", conf.retryInterval.String())
+		logger.Info("servant retries to connect to the hub", "wait", conf.retryInterval.String())
 
 		time.Sleep(conf.retryInterval.Get())
 	}
