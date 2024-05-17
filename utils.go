@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +20,6 @@ import (
 	cli "github.com/jawher/mow.cli"
 	"github.com/lmittmann/tint"
 	dehub "github.com/ysmood/dehub/lib"
-	"github.com/ysmood/whisper/lib/secure"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
@@ -46,9 +48,9 @@ func privateKey(path string) ssh.Signer {
 
 	b := readFile(path)
 
-	_, err := secure.SSHPrvKey(b, "")
+	_, err := ssh.ParseRawPrivateKey(b)
 	if err != nil {
-		if secure.IsAuthErr(err) {
+		if isAuthErr(err) {
 			p := getPassphrase(path)
 
 			s, err := ssh.ParsePrivateKeyWithPassphrase(b, []byte(p))
@@ -63,6 +65,11 @@ func privateKey(path string) ssh.Signer {
 	s, err := ssh.ParsePrivateKey(b)
 	e(err)
 	return s
+}
+
+func isAuthErr(err error) bool {
+	missingErr := &ssh.PassphraseMissingError{}
+	return errors.Is(err, x509.IncorrectPasswordError) || errors.As(err, &missingErr)
 }
 
 func getPassphrase(location string) string {
@@ -101,22 +108,34 @@ func readLine(prompt string) string {
 	return strings.TrimSpace(line)
 }
 
-func publicKeys(keys []string) func(ssh.PublicKey) bool {
+func publicKeys(l *slog.Logger, keys []string) func(ssh.PublicKey) bool {
 	list := [][]byte{}
 
 	for _, key := range keys {
+		if strings.HasPrefix(key, "@") {
+			ks, err := getGithubPubkey(key[1:])
+			if err != nil {
+				l.Error("failed to get public key from github", "err", err)
+				continue
+			}
+
+			list = append(list, ks...)
+			continue
+		}
+
 		_, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
 		if err == nil {
 			list = append(list, []byte(key))
 			continue
 		}
 
-		parseErr := err
+		l.Info("key is not public key format, try treat it as file path", "key", key)
 
 		b := readFile(key)
 		_, _, _, _, err = ssh.ParseAuthorizedKey(b)
 		if err != nil {
-			e(fmt.Errorf("failed get public key from '%s': %w, %w", key, parseErr, err))
+			l.Error("failed to parse public key", "key", key, "err", err)
+			continue
 		}
 
 		list = append(list, b)
@@ -128,6 +147,41 @@ func publicKeys(keys []string) func(ssh.PublicKey) bool {
 	}
 
 	return fn
+}
+
+func getGithubPubkey(userID string) ([][]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "", "https://api.github.com/users/"+userID+"/keys", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request to get public keys: %w", err)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get response of pubic key request: %w", err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	type key struct {
+		Key string `json:"key"`
+	}
+
+	var keys []key
+	err = json.NewDecoder(res.Body).Decode(&keys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode public keys for user: %w", err)
+	}
+
+	list := [][]byte{}
+
+	for _, k := range keys {
+		list = append(list, []byte(k.Key))
+	}
+
+	return list, nil
 }
 
 func mustDial(websocket bool, addr string) net.Conn {
