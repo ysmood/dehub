@@ -47,7 +47,9 @@ func setupMasterCLI(app *cli.Cli) {
 				"Use websocket to connect to hub. If set, the addr should be a websocket address.")
 
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
-			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil, "The list of public key content or path that are trusted.")
+			c.StringsOptPtr(&conf.pubKeys, "k public-keys", nil,
+				"The list of github user id, public key content, or path that are trusted. "+
+					"The github user id must be prefix with @ .")
 
 			c.StringOptPtr(&conf.outputFile, "o output", "tmp/dehub-master.log", "The file path to append the output.")
 

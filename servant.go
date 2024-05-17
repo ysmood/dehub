@@ -35,7 +35,8 @@ func setupServantCLI(app *cli.Cli) {
 
 			c.StringOptPtr(&conf.prvKey, "p private-key", "", "The private key file path.")
 			c.StringsArgPtr(&conf.pubKeys, "PUBLIC_KEYS", nil,
-				"The list of github user id, public key content, or path that are allowed to connect to the servant.")
+				"The list of github user id, public key content, or path that are allowed to connect to the servant. "+
+					"The github user id must be prefix with @ .")
 
 			c.BoolOptPtr(&conf.jsonOutput, "j json", true, "json output to stdout")
 
