@@ -59,16 +59,35 @@ func CheckPublicKeys(trustedPubKeys ...[]byte) (func(ssh.PublicKey) bool, error)
 	trusted := map[string]struct{}{}
 
 	for _, raw := range trustedPubKeys {
-		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
+		keys, err := parseAuthorizedKeys(raw)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse public key: %w", err)
 		}
 
-		trusted[ssh.FingerprintSHA256(key)] = struct{}{}
+		for _, key := range keys {
+			trusted[ssh.FingerprintSHA256(key)] = struct{}{}
+		}
 	}
 
 	return func(key ssh.PublicKey) bool {
 		_, ok := trusted[ssh.FingerprintSHA256(key)]
 		return ok
 	}, nil
+}
+
+func parseAuthorizedKeys(b []byte) ([]ssh.PublicKey, error) {
+	list := []ssh.PublicKey{}
+
+	for len(b) > 0 {
+		key, _, _, rest, err := ssh.ParseAuthorizedKey(b)
+		if err != nil {
+			return nil, err
+		}
+
+		b = rest
+
+		list = append(list, key)
+	}
+
+	return list, nil
 }
