@@ -230,7 +230,7 @@ func (s *Servant) shareDir(newChan ssh.NewChannel) {
 		s.Logger.Error("remote directory does not exist", "path", meta.Path, "err", err)
 	}
 
-	bfs := osfs.New(meta.Path)
+	bfs := osfs.New(meta.Path, osfs.WithBoundOS())
 	bfsPlusChange := osfsx.New(bfs)
 
 	handler := nfshelper.NewNullAuthHandler(bfsPlusChange)
