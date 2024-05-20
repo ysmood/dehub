@@ -140,7 +140,7 @@ func runMaster(conf masterConf) { //nolint: funlen
 		logger.Info("run command", "cmd", conf.cmdName, "args", conf.cmdArgs)
 		logger.Info("output log to", "file", conf.outputFile)
 
-		logger = outputToFile(conf.outputFile)
+		master.Logger = outputToFile(conf.outputFile)
 
 		e(master.Exec(os.Stdin, os.Stdout, conf.cmdName, conf.cmdArgs...))
 	} else if wait {
